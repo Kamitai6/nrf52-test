@@ -24,22 +24,13 @@ fn main() -> ! {
     let mut delay = delay::Delay::new(cp.SYST, 240000000_u32);
 
     stm32::rcc::clock_init(&dp);
-    stm32::gpio::gpio_a12_init(&dp);
-    stm32::gpio::gpio_c10_init(&dp);
-    stm32::gpio::gpio_c11_init(&dp);
-    stm32::gpio::gpio_c12_init(&dp);
-    // let spi = stm32::spi::SPI::new(&dp);
-    // let delay_func = move |ms: u32| delay.delay_ms(ms);
-    // let mut encoder = as5048::AS5048::new(&spi, delay_func);
-    // spi.spi3_init();
-
-    stm32::gpio::gpio_a12_toggle(&dp, true);
-    stm32::gpio::gpio_c10_toggle(&dp, true);
-    stm32::gpio::gpio_c11_toggle(&dp, true);
-    stm32::gpio::gpio_c12_toggle(&dp, true);
+    let spi = stm32::spi::SPI::new(&dp);
+    let delay_func = move |ms: u32| delay.delay_ms(ms);
+    let mut encoder = as5048::AS5048::new(&spi, delay_func);
+    spi.spi3_init();
 
     loop {
-        delay.delay_ms(100)
-        // let mut value = encoder.getState();
+        let mut state = encoder.getDiagnostic();
+        let mut value = encoder.getRawRotation();
     }
 }
