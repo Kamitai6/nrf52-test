@@ -7,14 +7,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug (OpenOCD)",
-            "request": "launch",
+            "name": "Cortex Debug (OpenOCD)",
             "type": "cortex-debug",
+            "request": "launch",
             "servertype": "openocd",
             "cwd": "${workspaceRoot}",
             "preLaunchTask": "Cargo Build (debug)",
             "runToEntryPoint": "main",
-            "executable": "./target/thumbv8m.main-none-eabihf/debug/stm32h562",
+            "executable": "${workspaceRoot}/target/thumbv8m.main-none-eabihf/debug/stm32h562",
             "device": "STM32H562RIT6",
             "searchDir": [
                 "C:/OpenOCD/ocd/tcl",
@@ -22,25 +22,38 @@
             "configFiles": [
                 "${workspaceRoot}/openocd.cfg",
             ],
-            "svdFile": "${workspaceRoot}/.vscode/STM32H562.svd",
+            "svdFile": "${workspaceRoot}/STM32H562.svd",
         },
         {
-            "name": "Release (OpenOCD)",
-            "request": "launch",
+            "name": "Cortex Debug (J-Link)",
             "type": "cortex-debug",
-            "servertype": "openocd",
+            "request": "launch",
+            "servertype": "jlink",
+            "interface": "swd", // 使用するインターフェース (JTAGの場合は "jtag")
+            "device": "STM32H562RI", // マイクロコントローラーの型番に合わせて変更
+            "executable": "${workspaceRoot}/target/thumbv8m.main-none-eabihf/debug/stm32h562",
+            "svdFile": "${workspaceRoot}/STM32H562.svd",
             "cwd": "${workspaceRoot}",
-            "preLaunchTask": "Cargo Build (release)",
+            "preLaunchTask": "Cargo Build (debug)",
             "runToEntryPoint": "main",
-            "executable": "./target/thumbv8m.main-none-eabihf/debug/stm32h562",
-            "device": "STM32H562RIT6",
-            "searchDir": [
-                "C:/OpenOCD/ocd/tcl",
+            "serverArgs": [
+                "-speed",
+                "4000",
+                "-endian",
+                "little",
             ],
-            "configFiles": [
-                "${workspaceRoot}/openocd.cfg",
-            ],
-            "svdFile": "${workspaceRoot}/.vscode/STM32H562.svd",
-        }
+            "serverpath": "C:/Program Files/SEGGER/JLink_V810b/JLinkGDBServerCL.exe", // JLinkGDBServerのパス
+            "showDevDebugOutput": "both",
+            "rttConfig": {
+                "enabled": true,
+                "decoders": [
+                    {
+                        "port": 0,
+                        "type": "console",
+                        // "encoding": "unsigned",
+                    }
+                ],
+            },
+        },
     ]
 }
