@@ -19,6 +19,14 @@ cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-sing
 cortex-m-rt = "0.7.0"
 panic-halt = "0.2.0"
 heapless = { version = "0.8", default-features = false }
+static_cell = "2"
+
+nb = "1.0"
+embedded-hal = "0.2.6"
+embedded-hal-1 = { package = "embedded-hal", version = "1.0" }
+embedded-hal-async = { version = "1.0" }
+embedded-io-async = { version = "0.6.1" }
+embedded-nal-async = { version = "0.7.1" }
 
 # cargo build/run
 [profile.dev]
