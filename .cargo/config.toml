@@ -17,5 +17,4 @@ target = "thumbv8m.main-none-eabihf" # Cortex-M33 (with FPU)
 rustflags = [
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=--nmagic",
-  "-C", "link-arg=-Tdefmt.x",
 ]
