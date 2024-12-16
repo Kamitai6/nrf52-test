@@ -23,6 +23,7 @@ use crate::stm32;
 extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
+use rtt_target::{rprintln, rtt_init_print};
 
 pub struct AS5048<'a> {
     spi: &'a stm32::spi::SPI<'a>,
@@ -100,7 +101,7 @@ impl<'a> AS5048<'a> {
         if (data & AS5048A_DIAG_COF) != 0 {
             return "CORDIC overflow".to_string();
         }
-        return "".to_string();
+        return "OK".to_string();
     }
 
     pub fn getErrors(&mut self) -> String {
@@ -114,7 +115,7 @@ impl<'a> AS5048<'a> {
         if (error & AS5048A_ERROR_FRAMING_FLAG) != 0 {
             return "Framing error".to_string();
         }
-        return "".to_string();
+        return "OK".to_string();
     }
 
     pub fn setZeroPosition(&mut self, position: i16) {
@@ -132,12 +133,14 @@ impl<'a> AS5048<'a> {
         let response = self.spi.spi3_send(command);
         self.spi.spi3_end();
 
-        (self.delay_ms)(1_u32);
+        // (self.delay_ms)(1_u32);
 
-        self.spi.spi3_begin();
-        let response = self.spi.spi3_send(0x0000);
-        self.spi.spi3_end();
+        // self.spi.spi3_begin();
+        // let response = self.spi.spi3_send(0x0000);
+        // self.spi.spi3_end();
+        rprintln!("response: {}", response);
 
+        // (self.delay_ms)(1000_u32);
         //Check if the error bit is set
         // if (response & 0x4000) != 0 {
         //     // error

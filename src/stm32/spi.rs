@@ -47,7 +47,7 @@ impl<'a> SPI<'a> {
         self.dp.SPI3.cr1().modify(|_, w| w.ssi().set_bit());
 
         self.dp.SPI3.cfg1().modify(|_, w| {
-            w.mbr().div32(); // 240MHz/32=7.5MHz
+            w.mbr().div64(); // 240MHz/32=7.5MHz
             w.dsize().bits(16 - 1);
             w.crcen().disabled()
         });
@@ -83,6 +83,9 @@ impl<'a> SPI<'a> {
             cortex_m::asm::nop();
         }
         self.dp.SPI3.txdr().write(|w| w.txdr().bits(data as u32));
+        while self.dp.SPI3.sr().read().txc().is_ongoing() {
+            cortex_m::asm::nop();
+        }
         while self.dp.SPI3.sr().read().rxp().is_empty() {
             cortex_m::asm::nop();
         }
