@@ -1,4 +1,4 @@
-pub mod dma;
+pub mod gpdma;
 pub mod gpio;
 pub mod pwm;
 pub mod rcc;

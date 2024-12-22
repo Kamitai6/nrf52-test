@@ -156,7 +156,7 @@ use cortex_m_rt::entry;
 use embedded_alloc::Heap;
 use panic_halt as _;
 use rtt_target::{rprintln, rtt_init_print};
-use stm32h5::stm32h562;
+use stm32h5::stm32h562 as pac;
 
 mod as5048;
 mod stm32;
@@ -172,8 +172,8 @@ fn main() -> ! {
     static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
     unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
 
-    let dp = stm32h562::Peripherals::take().unwrap();
-    let cp = cortex_m::peripheral::Peripherals::take().unwrap();
+    let dp = pac::Peripherals::take().unwrap(); //device peripheral
+    let cp = cortex_m::peripheral::Peripherals::take().unwrap(); //cortexm peripheral
     let mut delay = delay::Delay::new(cp.SYST, 240000000_u32);
 
     stm32::rcc::clock_init(&dp);

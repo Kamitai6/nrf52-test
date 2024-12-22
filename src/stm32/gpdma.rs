@@ -1,106 +1,75 @@
-use stm32h5::stm32h562;
+use stm32h5::stm32h562::{GPDMA1, GPDMA2};
+use cortex_m::interrupt;
 
-use core::future::Future;
-use core::pin::Pin;
-use core::sync::atomic::{fence, Ordering};
-use core::task::{Context, Poll};
-
-enum Direction {
-    MemoryToPeripheral,
-    PeripheralToMemory,
-}
-
-/// Convenience wrapper, contains a channel and a request number.
-///
-/// Commonly used in peripheral drivers that own DMA channels.
-pub(crate) struct ChannelAndRequest<'d> {
-    pub channel: PeripheralRef<'d, AnyChannel>,
-    pub request: Request,
-}
-
-impl<'d> ChannelAndRequest<'d> {
-    pub unsafe fn read<'a, W: Word>(
-        &'a mut self,
-        peri_addr: *mut W,
-        buf: &'a mut [W],
-        options: TransferOptions,
-    ) -> Transfer<'a> {
-        Transfer::new_read(&mut self.channel, self.request, peri_addr, buf, options)
-    }
-
-    pub unsafe fn read_raw<'a, W: Word>(
-        &'a mut self,
-        peri_addr: *mut W,
-        buf: *mut [W],
-        options: TransferOptions,
-    ) -> Transfer<'a> {
-        Transfer::new_read_raw(&mut self.channel, self.request, peri_addr, buf, options)
-    }
-
-    pub unsafe fn write<'a, W: Word>(
-        &'a mut self,
-        buf: &'a [W],
-        peri_addr: *mut W,
-        options: TransferOptions,
-    ) -> Transfer<'a> {
-        Transfer::new_write(&mut self.channel, self.request, buf, peri_addr, options)
-    }
-
-    pub unsafe fn write_raw<'a, W: Word>(
-        &'a mut self,
-        buf: *const [W],
-        peri_addr: *mut W,
-        options: TransferOptions,
-    ) -> Transfer<'a> {
-        Transfer::new_write_raw(&mut self.channel, self.request, buf, peri_addr, options)
-    }
-
-    #[allow(dead_code)]
-    pub unsafe fn write_repeated<'a, W: Word>(
-        &'a mut self,
-        repeated: &'a W,
-        count: usize,
-        peri_addr: *mut W,
-        options: TransferOptions,
-    ) -> Transfer<'a> {
-        Transfer::new_write_repeated(
-            &mut self.channel,
-            self.request,
-            repeated,
-            count,
-            peri_addr,
-            options,
-        )
-    }
-}
-
-pub struct DMA<'a> {
-    dp: &'a stm32h562::Peripherals,
-}
-
-impl<'a> DMA<'a> {
-    pub fn new(dp: &stm32h562::Peripherals) -> DMA {
-        DMA { dp }
-    }
-
-    /// safety: must be called only once
-    pub(crate) unsafe fn init(cs: critical_section::CriticalSection, irq_priority: Priority) {
-        foreach_interrupt! {
-            ($peri:ident, gpdma, $block:ident, $signal_name:ident, $irq:ident) => {
-                crate::interrupt::typelevel::$irq::set_priority_with_cs(cs, irq_priority);
-                crate::interrupt::typelevel::$irq::enable();
-            };
+macro_rules! generate_channel_accessors {
+    ($instance:ident, $channel_number:expr) => {
+        match $channel_number {
+            0 => &$instance.ch1cr,
+            1 => &$instance.ch2cr,
+            2 => &$instance.ch3cr,
+            3 => &$instance.ch4cr,
+            4 => &$instance.ch5cr,
+            5 => &$instance.ch6cr,
+            6 => &$instance.ch7cr,
+            7 => &$instance.ch8cr,
+            _ => unreachable!(),
         }
-        crate::_generated::init_gpdma();
-        ->
-        これらしい
-        pub unsafe fn init_gpdma() {
-            crate::pac::RCC.ahb1enr().modify(|w| w.set_gpdma1en(true));
-            crate::pac::RCC.ahb1enr().modify(|w| w.set_gpdma2en(true));
+    };
+}
+
+trait Instance {}
+impl Instance for GPDMA1 {}
+impl Instance for GPDMA2 {}
+
+pub struct Gpdma<'a, T: Instance> {
+    instance: &'a T,
+    channel: u8,
+}
+
+impl<'a> Gpdma<'a, T> {
+    pub fn new(instance: &'a T, channel: u8) -> Option<Self> {
+        if channel < 8 {
+            Some(Self {
+                instance,
+                channel,
+            })
+        } else {
+            None
         }
     }
 
-    pub fn dma1_ch3_init(&self) {
+    pub fn configure(&self, config: ChannelConfig) {
+        let reg = generate_channel_accessors!(self.instance, self.channel_number);
+        reg.modify(|_, w| {
+            // 必要な設定を記述
+            w
+        });
+    }
+}
+
+！！！！！！上と下を統合したい！！！！！！
+
+static mut TAKE_FLAG: [bool; 8] = [false; 8];
+
+// Optional is f**k, so i only use Result
+impl<'a, Instance> Gpdma<'a, Instance> {
+    #[inline]
+    pub fn take(channel: u8, peripheral: &stm32h562::Peripherals) -> Option<Self> {
+        interrupt::free(|_| { //割り込み禁止
+            if unsafe { TAKE_FLAG[channel] } {
+                return None;
+            }
+            Some(unsafe { Gpdma::steal(channel, peripheral) })
+        })
+    }
+    pub unsafe fn steal(channel: u8, dp: &stm32h562::Peripherals) -> Self {
+        TAKE_FLAG[channel] = true;
+        crate::interrupt::typelevel::$irq::set_priority_with_cs(cs, irq_priority);
+        crate::interrupt::typelevel::$irq::enable();
+
+        crate::pac::RCC.ahb1enr().modify(|w| w.set_gpdma1en(true));
+        crate::pac::RCC.ahb1enr().modify(|w| w.set_gpdma2en(true));
+
         self.dp.GPDMA1.ch3.cr().write(|w| {
             w.dir().from_memory();
             w.psize().bits16();
@@ -114,6 +83,8 @@ impl<'a> DMA<'a> {
             w.mburst().single();
             w.chsel().bits(0b011);
         });
+
+        Gpdma { dp }
     }
 
     pub fn spi3_begin(&self) {
@@ -270,9 +241,9 @@ impl<'a> Transfer<'a> {
 
         let this = Self { channel };
 
-        dmamuxはないっぽいな
-        #[cfg(dmamux)]
-        super::dmamux::configure_dmamux(&*this.channel, request);
+        // dmamuxはないっぽいな
+        // #[cfg(dmamux)]
+        // super::dmamux::configure_dmamux(&*this.channel, request);
 
         ch.cr().write(|w| w.set_reset(true));
         ch.fcr().write(|w| w.0 = 0xFFFF_FFFF); // clear all irqs
@@ -350,39 +321,5 @@ impl<'a> Transfer<'a> {
 
         ch.br1().read().bndt()
     }
-
-    /// Blocking wait until the transfer finishes.
-    pub fn blocking_wait(mut self) {
-        while self.is_running() {}
-
-        // "Subsequent reads and writes cannot be moved ahead of preceding reads."
-        fence(Ordering::SeqCst);
-
-        core::mem::forget(self);
-    }
 }
-
-impl<'a> Drop for Transfer<'a> {
-    fn drop(&mut self) {
-        self.request_stop();
-        while self.is_running() {}
-
-        // "Subsequent reads and writes cannot be moved ahead of preceding reads."
-        fence(Ordering::SeqCst);
-    }
-}
-
-impl<'a> Unpin for Transfer<'a> {}
-impl<'a> Future for Transfer<'a> {
-    type Output = ();
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let state = &STATE[self.channel.id as usize];
-        state.waker.register(cx.waker());
-
-        if self.is_running() {
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
 }
