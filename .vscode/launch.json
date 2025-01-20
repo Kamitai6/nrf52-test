@@ -14,15 +14,14 @@
             "cwd": "${workspaceRoot}",
             "preLaunchTask": "Cargo Build (debug)",
             "runToEntryPoint": "main",
-            "executable": "${workspaceRoot}/target/thumbv8m.main-none-eabihf/debug/stm32h562",
-            "device": "STM32H562RIT6",
+            "executable": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/stm32h743",
+            "device": "STM32H743VGT6",
             "searchDir": [
                 "C:/OpenOCD/ocd/tcl",
             ],
             "configFiles": [
                 "${workspaceRoot}/openocd.cfg",
             ],
-            "svdFile": "${workspaceRoot}/STM32H562.svd",
         },
         {
             "name": "Cortex Debug (J-Link)",
@@ -30,9 +29,8 @@
             "request": "launch",
             "servertype": "jlink",
             "interface": "swd", // 使用するインターフェース (JTAGの場合は "jtag")
-            "device": "STM32H562RI", // マイクロコントローラーの型番に合わせて変更
-            "executable": "${workspaceRoot}/target/thumbv8m.main-none-eabihf/debug/stm32h562",
-            "svdFile": "${workspaceRoot}/STM32H562.svd",
+            "device": "STM32H743VG", // マイクロコントローラーの型番に合わせて変更
+            "executable": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/stm32h743",
             "cwd": "${workspaceRoot}",
             "preLaunchTask": "Cargo Build (debug)",
             "runToEntryPoint": "main",
@@ -42,7 +40,7 @@
                 "-endian",
                 "little",
             ],
-            "serverpath": "C:/Program Files/SEGGER/JLink_V810b/JLinkGDBServerCL.exe", // JLinkGDBServerのパス
+            "serverpath": "C:/Program Files/SEGGER/JLink_V812/JLinkGDBServerCL.exe", // JLinkGDBServerのパス
             "showDevDebugOutput": "both",
             "rttConfig": {
                 "enabled": true,
