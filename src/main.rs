@@ -7,6 +7,12 @@ use panic_halt as _;
 use rtt_target::{rprintln, rtt_init_print};
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
+pub struct Drv8343Reg {
+    pub fault_status: u8,
+    pub diag_status: [u8; 3],
+    pub control: [u8; 14],
+}
+
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
@@ -31,19 +37,19 @@ fn main() -> ! {
     let gpioc = dp.GPIOC.split(ccdr.peripheral.GPIOC);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
 
-    let sck = gpioa.pa12.into_alternate();
-    let miso = gpiob.pb14.into_alternate();
-    let mosi = gpiob.pb15.into_alternate();
-    let mut nss = gpioa.pa11.into_push_pull_output();
+    let sck = gpioc.pc10.into_alternate();
+    let miso = gpioc.pc11.into_alternate();
+    let mosi = gpioc.pc12.into_alternate();
+    let mut nss = gpioa.pa15.into_push_pull_output();
 
     let mut led = gpiod.pd0.into_push_pull_output();
     let mut delay = cp.SYST.delay(ccdr.clocks);
 
-    let mut spi: spi::Spi<_, _, u8> = dp.SPI2.spi(
+    let mut spi: spi::Spi<_, _, u16> = dp.SPI3.spi(
         (sck, miso, mosi),
-        spi::MODE_1,
-        2.MHz(),
-        ccdr.peripheral.SPI2,
+        spi::MODE_1, // or MODE_1?
+        500.kHz(),
+        ccdr.peripheral.SPI3,
         &ccdr.clocks,
     );
     nss.set_high();
@@ -51,7 +57,7 @@ fn main() -> ! {
 
     delay.delay_us(100_u16);
 
-    let mut spi_buffer = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+    let mut spi_buffer: [u16; 1] = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000]; //fault statusを読みたい
 
     nss.set_low();
     led.set_low();
@@ -71,7 +77,7 @@ fn main() -> ! {
         
         delay.delay_us(800_u16);
 
-        spi_buffer = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+        spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000];
         nss.set_low();
         led.set_low();
         let result2 = spi.transfer(&mut spi_buffer);
@@ -80,16 +86,6 @@ fn main() -> ! {
                 for (i, &value) in values.iter().enumerate() {
                     rprintln!("Received data {}: {}", i, value);
                 }
-                let angle_lsb = ((values[1] & 0x3F) as u16) << 8 | (values[0] as u16);
-                rprintln!("angle {}", angle_lsb);
-                let error_lsb = (values[1] as u16) >> 6;
-                rprintln!("error {}", error_lsb);
-                let crc_lsb = (values[7] as u16);
-                rprintln!("crc {}", crc_lsb);
-                let vgain_lsb = (values[4] as u16);
-                rprintln!("vgain {}", vgain_lsb);
-                let rollcnt_lsb = (values[6] as u16) & 0x3F;
-                rprintln!("rollcnt {}", rollcnt_lsb);
             }
             Err(e) => rprintln!("Error: {:?}", e),
         }
