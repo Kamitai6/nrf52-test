@@ -42,50 +42,57 @@ fn main() -> ! {
     let mut spi: spi::Spi<_, _, u8> = dp.SPI2.spi(
         (sck, miso, mosi),
         spi::MODE_1,
-        1.MHz(),
+        2.MHz(),
         ccdr.peripheral.SPI2,
         &ccdr.clocks,
     );
     nss.set_high();
     led.set_high();
 
-    loop {
-        delay.delay_us(500_u16);
+    delay.delay_us(100_u16);
 
-        let mut spi_buffer = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+    let mut spi_buffer = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
 
-        nss.set_low();
-        led.set_low();
-        delay.delay_us(100_u16);
-        let result = spi.transfer(&mut spi_buffer);
-        match result {
-            Ok(values) => {
-                for (i, &value) in values.iter().enumerate() {
-                    rprintln!("Received data {}: {}", i, value);
-                }
+    nss.set_low();
+    led.set_low();
+    let result = spi.transfer(&mut spi_buffer);
+    match result {
+        Ok(values) => {
+            for (i, &value) in values.iter().enumerate() {
+                rprintln!("Received data {}: {}", i, value);
             }
-            Err(e) => rprintln!("Error: {:?}", e),
         }
-        nss.set_high();
-        led.set_high();
+        Err(e) => rprintln!("Error: {:?}", e),
+    }
+    nss.set_high();
+    led.set_high();
 
-        delay.delay_us(500_u16);
+    loop {
+        
+        delay.delay_us(800_u16);
 
         spi_buffer = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
         nss.set_low();
         led.set_low();
-        delay.delay_us(100_u16);
         let result2 = spi.transfer(&mut spi_buffer);
         match result2 {
             Ok(values) => {
                 for (i, &value) in values.iter().enumerate() {
                     rprintln!("Received data {}: {}", i, value);
                 }
+                let angle_lsb = ((values[1] & 0x3F) as u16) << 8 | (values[0] as u16);
+                rprintln!("angle {}", angle_lsb);
+                let error_lsb = (values[1] as u16) >> 6;
+                rprintln!("error {}", error_lsb);
+                let crc_lsb = (values[7] as u16);
+                rprintln!("crc {}", crc_lsb);
+                let vgain_lsb = (values[4] as u16);
+                rprintln!("vgain {}", vgain_lsb);
+                let rollcnt_lsb = (values[6] as u16) & 0x3F;
+                rprintln!("rollcnt {}", rollcnt_lsb);
             }
             Err(e) => rprintln!("Error: {:?}", e),
         }
-        // let angle_lsb = ((result2[1] & 0x3F) as u16) << 8 | (result2[0] as u16);
-        // rprintln!("angle {}", angle_lsb);
         nss.set_high();
         led.set_high();
     }
