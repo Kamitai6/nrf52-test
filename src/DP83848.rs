@@ -89,8 +89,8 @@ impl<MAC: StationManagement> PHY for DP83848<MAC> {
     /// Reset PHY and wait for it to come out of reset.
     fn phy_reset(&mut self) {
         self.mac.smi_write(REG_BMCR, BMCR_SOFT_RESET);
-        // while (self.mac.smi_read(REG_BMCR) & BMCR_SOFT_RESET) == BMCR_SOFT_RESET
-        // {}
+        while (self.mac.smi_read(REG_BMCR) & BMCR_SOFT_RESET) == BMCR_SOFT_RESET
+        {}
     }
 
     /// PHY initialisation.
@@ -172,5 +172,9 @@ impl<MAC: StationManagement> DP83848<MAC> {
 
     pub fn block_until_link(&mut self) {
         while self.link_established() != STATUS_OK {}
+    }
+
+    pub fn check_phy_status(&mut self) -> u16 {
+        self.mac.smi_read(REG_BMSR)
     }
 }

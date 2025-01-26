@@ -189,11 +189,12 @@ mod app {
         };
 
         // Initialise ethernet PHY...
-        let mut dp83848 = DP83848::new(eth_mac);
+        let eth_mac_custom = eth_mac.set_phy_addr(0x01);
+        let mut dp83848 = DP83848::new(eth_mac_custom);
         dp83848.phy_reset();
-        for i in 0..5000000 {
+        // for i in 0..5000000 {
 
-        }
+        // }
         dp83848.phy_init();
         // The eth_dma should not be used until the PHY reports the link is up
 
@@ -236,6 +237,7 @@ mod app {
     fn idle(ctx: idle::Context) -> ! {
         loop {
             // Ethernet
+            // let status = ctx.local.dp83848.check_phy_status();
             let status = ctx.local.dp83848.poll_link();
             rprintln!("status: {}", status);
             if status == 0 {
