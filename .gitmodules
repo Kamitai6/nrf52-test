@@ -1,0 +1,3 @@
+[submodule "stm32h7xx-hal"]
+	path = stm32h7xx-hal
+	url = git@github.com:Kamitai6/stm32h7xx-hal.git
