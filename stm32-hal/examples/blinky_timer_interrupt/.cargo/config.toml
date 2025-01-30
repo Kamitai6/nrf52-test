@@ -1,0 +1,11 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip STM32F401CEUx" # to list chips, run `probe-run --list-chips.`
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[alias]
+rb = "run --bin"
+rrb = "run --release --bin"
+rr = "run --release"
+br = "build --release"

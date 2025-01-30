@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::mem::MaybeUninit;
+use core::marker::PhantomData;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -9,31 +10,16 @@ use panic_rtt_target as _;
 use rtt_target::{rprintln, rtt_init_print};
 
 use rtic::app;
-use rtic_monotonics::systick::prelude::*;
+
+use stm32h7xx_hal::{ethernet, stm32, gpio, spi, dma, prelude::*};
+use stm32h7xx_hal::{ethernet::smoltcp};
 
 use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
 use smoltcp::time::Instant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
 
-use stm32h7xx_hal::{ethernet, rcc::CoreClocks, stm32};
-mod DP83848;
-
-/// Configure SYSTICK for 1ms timebase
-// fn systick_init(syst: &mut stm32::SYST, clocks: CoreClocks) {
-//     let c_ck_mhz = clocks.c_ck().to_MHz();
-
-//     let syst_calib = 0x3E8;
-
-//     syst.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
-//     syst.set_reload((syst_calib * c_ck_mhz) - 1);
-//     syst.enable_interrupt();
-//     syst.enable_counter();
-// }
-// systick_monotonic!(Mono, 1000);
-
-// ======================================================================
-// Entry point
-// ======================================================================
+mod communication;
+use communication::net::*;
 
 /// TIME is an atomic u32 that counts milliseconds. Although not used
 /// here, it is very useful to have for network protocols
@@ -42,68 +28,112 @@ static TIME: AtomicU32 = AtomicU32::new(0);
 /// Locally administered MAC address
 const MAC_ADDRESS: [u8; 6] = [0x02, 0x00, 0x11, 0x22, 0x33, 0x44];
 
-/// Ethernet descriptor rings are a global singleton
-#[link_section = ".sram3.eth"]
-static mut DES_RING: MaybeUninit<ethernet::DesRing<4, 4>> =
-    MaybeUninit::uninit();
+const BUFFER_SIZE: usize = 100;
 
-/// Net storage with static initialisation - another global singleton
-pub struct NetStorageStatic<'a> {
-    socket_storage: [SocketStorage<'a>; 8],
+#[link_section = ".axisram.buffers"]
+static mut BUFFER: MaybeUninit<[u8; BUFFER_SIZE]> = MaybeUninit::uninit();
+
+static mut WRITE_BUF: [u8; 13] = [0; 13];
+
+// IMU readings buffer. 3 accelerometer, and 3 gyro measurements; 2 bytes each. 0-padded on the left,
+// since that's where we pass the register in the write buffer.
+// This buffer is static, to ensure it lives through the life of the program.
+pub static mut IMU_READINGS: [u8; 13] = [0; 13];
+
+/// Utility function to write a single byte.
+fn write_one(reg: Reg, word: u8, spi: &mut Spi<SPI1>, cs: &mut Pin) {
+    cs.set_low();
+    spi.write(&[reg as u8, word]).ok();
+    cs.set_high();
 }
 
-// MaybeUninit allows us write code that is correct even if STORE is not
-// initialised by the runtime
-static mut STORE: MaybeUninit<NetStorageStatic> = MaybeUninit::uninit();
+pub fn setup(spi: &mut Spi<SPI1>, cs: &mut Pin, delay: &mut Delay) {
+    // Leave default of SPI mode 0 and 3.
 
-pub struct Net<'a> {
-    iface: Interface,
-    ethdev: ethernet::EthernetDMA<4, 4>,
-    sockets: SocketSet<'a>,
+    // Enable gyros and accelerometers in low noise mode.
+    write_one(Reg::PwrMgmt0, 0b0000_1111, spi, cs);
+
+    // Set gyros and accelerometers to 8kHz update rate, 2000 DPS gyro full scale range,
+    // and +-16g accelerometer full scale range.
+    write_one(Reg::GyroConfig0, 0b0000_0011, spi, cs);
+    // "When transitioning from OFF to any of the other modes, do not issue any
+    // register writes for 200µs." (Gyro and accel)
+    delay.delay_us(200);
+
+    write_one(Reg::AccelConfig0, 0b0000_0011, spi, cs);
+    delay.delay_us(200);
+
+    // (Leave default interrupt settings of active low, push pull, pulsed.)
+
+    // Enable UI data ready interrupt routed to the INT1 pin.
+    write_one(Reg::IntSource0, 0b0000_1000, spi, cs);
 }
-impl<'a> Net<'a> {
-    pub fn new(
-        store: &'a mut NetStorageStatic<'a>,
-        mut ethdev: ethernet::EthernetDMA<4, 4>,
-        ethernet_addr: HardwareAddress,
-        now: Instant,
-    ) -> Self {
-        let config = Config::new(ethernet_addr);
-        let mut iface = Interface::new(config, &mut ethdev, now);
-        // Set IP address
-        iface.update_ip_addrs(|addrs| {
-            let _ = addrs.push(IpCidr::new(IpAddress::v4(192, 168, 1, 99), 0));
-        });
 
-        let sockets = SocketSet::new(&mut store.socket_storage[..]);
+/// We use this to assemble readings from the DMA buffer.
+pub fn from_buffer(buf: &[u8]) -> Self {
+    // todo: Note: this mapping may be different for diff IMUs, eg if they use a different reading register ordering.
+    // todo: Currently hard-set for ICM426xx.
 
-        Net::<'a> {
-            iface,
-            ethdev,
-            sockets,
-        }
+    // Ignore byte 0; it's for the first reg passed during the `write` transfer.
+    Self {
+        a_x: interpret_accel(i16::from_be_bytes([buf[1], buf[2]])),
+        a_y: interpret_accel(i16::from_be_bytes([buf[3], buf[4]])),
+        a_z: interpret_accel(i16::from_be_bytes([buf[5], buf[6]])),
+        v_pitch: interpret_gyro(i16::from_be_bytes([buf[7], buf[8]])),
+        v_roll: interpret_gyro(i16::from_be_bytes([buf[9], buf[10]])),
+        v_yaw: interpret_gyro(i16::from_be_bytes([buf[11], buf[12]])),
+    }
+}
+
+pub fn read_imu_dma(starting_addr: u8, spi: &mut Spi<SPI1>, cs: &mut Pin) {
+    // First byte is the first data reg, per this IMU's. Remaining bytes are empty, while
+    // the MISO line transmits readings.
+    // Note that we use a static buffer to ensure it lives throughout the DMA xfer.
+    unsafe {
+        WRITE_BUF[0] = starting_addr;
     }
 
-    /// Polls on the ethernet interface. You should refer to the smoltcp
-    /// documentation for poll() to understand how to call poll efficiently
-    pub fn poll(&mut self, now: i64) {
-        let timestamp = Instant::from_millis(now);
+    cs.set_low();
 
-        self.iface
-            .poll(timestamp, &mut self.ethdev, &mut self.sockets);
+    unsafe {
+        spi.transfer_dma(
+            &WRITE_BUF,
+            &mut crate::IMU_READINGS,
+            DmaChannel::C1,
+            DmaChannel::C2,
+            Default::default(),
+            Default::default(),
+            DmaPeriph::Dma1,
+        );
     }
 }
 
-#[app(device = stm32h7xx_hal::stm32, peripherals = true)]
+#[app(device = stm32, peripherals = true)]
 mod app {
     use stm32h7xx_hal::{ethernet, ethernet::PHY, gpio, prelude::*};
-    use DP83848::DP83848;
+    use communication::dp83848::DP83848;
 
     use super::*;
     use core::sync::atomic::Ordering;
 
     #[shared]
-    struct SharedResources {}
+    struct SharedResources {
+        nss:gpio::gpioa::PA11<gpio::Output<gpio::PushPull>>,
+        spi_write_transfer: dma::Transfer<
+            dma::dma::Stream1<stm32::DMA1>,
+            spi::Spi<stm32::SPI2, spi::Disabled, u8>,
+            dma::PeripheralToMemory,
+            &'static mut [u8; BUFFER_SIZE],
+            dma::DBTransfer,
+        >,
+        spi_read_transfer: dma::Transfer<
+            dma::dma::Stream2<stm32::DMA1>,
+            spi::Spi<stm32::SPI2, spi::Disabled, u8>,
+            dma::MemoryToPeripheral,
+            &'static mut [u8; BUFFER_SIZE],
+            dma::DBTransfer,
+        >,
+    }
     #[local]
     struct LocalResources {
         net: Net<'static>,
@@ -124,10 +154,12 @@ mod app {
 
         // Initialise clocks...
         rprintln!("Setup RCC...                  ");
-        let rcc = ctx.device.RCC.constrain();
+        let mut rcc = ctx.device.RCC.constrain();
+        let reason = rcc.get_reset_reason();
         let ccdr = rcc
             .sys_ck(200.MHz())
             .hclk(200.MHz())
+            .pll1_q_ck(200.MHz())
             .freeze(pwrcfg, &ctx.device.SYSCFG);
 
         // Initialise system...
@@ -136,11 +168,106 @@ mod app {
         // ctx.core.SCB.enable_dcache(&mut ctx.core.CPUID);
         ctx.core.DWT.enable_cycle_counter();
 
+        rprintln!("Why rst -> : {}", reason);
+
         // Initialise IO...
         let gpioa = ctx.device.GPIOA.split(ccdr.peripheral.GPIOA);
         let gpiob = ctx.device.GPIOB.split(ccdr.peripheral.GPIOB);
         let gpioc = ctx.device.GPIOC.split(ccdr.peripheral.GPIOC);
         let gpiod = ctx.device.GPIOD.split(ccdr.peripheral.GPIOD);
+        
+        //spi
+        let spi = {
+            let sck = gpioa.pa12.into_alternate().speed(gpio::Speed::VeryHigh);
+            let miso = gpiob.pb14.into_alternate().speed(gpio::Speed::VeryHigh);
+            let mosi = gpiob.pb15.into_alternate().speed(gpio::Speed::VeryHigh);
+            let config = spi::Config::new(spi::MODE_1)
+                .communication_mode(spi::CommunicationMode::FullDuplex);
+
+            let spi: spi::Spi<_, _, u8> = ctx.device.SPI2.spi(
+                (sck, miso, mosi),
+                config,
+                2.MHz(),
+                ccdr.peripheral.SPI2,
+                &ccdr.clocks,
+            );
+
+            spi.disable()
+        };
+        let mut nss = gpioa.pa11.into_push_pull_output().speed(gpio::Speed::VeryHigh);
+        nss.set_high();
+
+        let tx_buffer: &'static mut [u8; BUFFER_SIZE] = {
+            let buf: &mut [MaybeUninit<u8>; BUFFER_SIZE] = unsafe {
+                &mut *(core::ptr::addr_of_mut!(BUFFER)
+                    as *mut [MaybeUninit<u8>; BUFFER_SIZE])
+            };
+
+            for (i, value) in buf.iter_mut().enumerate() {
+                unsafe {
+                    value.as_mut_ptr().write(i as u8 + 0x60); // 0x60, 0x61, 0x62...
+                }
+            }
+
+            #[allow(static_mut_refs)] // TODO: Fix this
+            unsafe {
+                BUFFER.assume_init_mut()
+            }
+        };
+        let rx_buffer: &'static mut [u8; BUFFER_SIZE] = {
+            let buf: &mut [MaybeUninit<u8>; BUFFER_SIZE] = unsafe {
+                &mut *(core::ptr::addr_of_mut!(BUFFER)
+                    as *mut [MaybeUninit<u8>; BUFFER_SIZE])
+            };
+
+            for (i, value) in buf.iter_mut().enumerate() {
+                unsafe {
+                    value.as_mut_ptr().write(i as u8 + 0x60); // 0x60, 0x61, 0x62...
+                }
+            }
+
+            #[allow(static_mut_refs)] // TODO: Fix this
+            unsafe {
+                BUFFER.assume_init_mut()
+            }
+        };
+        let streams = dma::dma::StreamsTuple::new(ctx.device.DMA1, ccdr.peripheral.DMA1);
+        let tx_config = dma::dma::DmaConfig::default()
+            .memory_increment(true)
+            .transfer_complete_interrupt(true);
+        let rx_config = dma::dma::DmaConfig::default()
+            .memory_increment(true)
+            .transfer_complete_interrupt(true);
+        let spi_write_transfer: dma::Transfer<_, _, dma::PeripheralToMemory, _, _,>
+             = dma::Transfer::init(streams.1, spi, tx_buffer, None, tx_config);
+        let spi_read_transfer: dma::Transfer<_, _, dma::MemoryToPeripheral, _, _,>
+             = dma::Transfer::init_const(streams.2, spi, rx_buffer, None, rx_config);
+
+        dma::mux(DmaPeriph::Dma1, DmaChannel::C1, DmaInput::Spi1Tx);
+        dma::mux(DmaPeriph::Dma1, DmaChannel::C2, DmaInput::Spi1Rx);
+
+        // We use Spi transfer complete to know when our readings are ready.
+        dma.enable_interrupt(DmaChannel::C2, DmaInterrupt::TransferComplete);
+
+        unsafe {
+            // Write to SPI, using DMA.
+            // spi.write_dma(&write_buf, DmaChannel::C1, Default::default(), DmaPeriph::Dma2);
+    
+            // Read (transfer) from SPI, using DMA.
+            spi.transfer_dma(
+                // Write buffer, starting with the registers we'd like to access, and 0-padded to
+                // read 3 bytes.
+                &SPI_WRITE_BUF,
+                &mut SPI_READ_BUF,  // Read buf, where the data will go
+                DmaChannel::C1,     // Write channel
+                DmaChannel::C2,     // Read channel
+                Default::default(), // Write channel config
+                Default::default(), // Read channel config
+                DmaPeriph::Dma2,
+            );
+        }
+
+        // ethernet
         let mut link_led = gpiod.pd0.into_push_pull_output();
         link_led.set_high();
 
@@ -154,7 +281,6 @@ mod app {
         let rmii_txd0 = gpiob.pb12.into_alternate();
         let rmii_txd1 = gpiob.pb13.into_alternate();
 
-        // Initialise ethernet...
         assert_eq!(ccdr.clocks.hclk().raw(), 200_000_000); // HCLK 200MHz
         assert_eq!(ccdr.clocks.pclk1().raw(), 100_000_000); // PCLK 100MHz
         assert_eq!(ccdr.clocks.pclk2().raw(), 100_000_000); // PCLK 100MHz
@@ -192,11 +318,7 @@ mod app {
         let eth_mac_custom = eth_mac.set_phy_addr(0x01);
         let mut dp83848 = DP83848::new(eth_mac_custom);
         dp83848.phy_reset();
-        // for i in 0..5000000 {
-
-        // }
         dp83848.phy_init();
-        // The eth_dma should not be used until the PHY reports the link is up
 
         unsafe { ethernet::enable_interrupt() };
 
@@ -219,11 +341,12 @@ mod app {
 
         let net = Net::new(store, eth_dma, mac_addr.into(), Instant::ZERO);
 
-        // 1ms tick
-        // systick_init(ctx.core.SYST, ccdr.clocks);
-
         (
-            SharedResources {},
+            SharedResources {
+                nss,
+                spi_write_transfer,
+                spi_read_transfer,
+            },
             LocalResources {
                 net,
                 dp83848,
@@ -232,19 +355,133 @@ mod app {
         )
     }
 
-    // #[idle(local = [dp83848])]
-    #[idle(local = [dp83848, link_led])]
+    #[idle(local = [dp83848, link_led], shared = [spi_write_transfer, spi_read_transfer, nss])]
     fn idle(ctx: idle::Context) -> ! {
+        // Start the DMA transfer over SPI.
+        (ctx.shared.spi_write_transfer, ctx.shared.spi_read_transfer, ctx.shared.nss).lock(|spi_tx, spi_rx, nss| {
+            spi_tx.start(|spi| {
+                // Set CS low for the transfer.
+                nss.set_low();
+
+                // Enable TX DMA support, enable the SPI peripheral, and start the transaction.
+                spi.enable_dma_tx();
+                spi.inner_mut().cr1.modify(|_, w| w.spe().enabled());
+                spi.inner_mut().cr1.modify(|_, w| w.cstart().started());
+
+                // The transaction immediately begins as the TX FIFO is now being filled by DMA.
+            });
+            spi_rx.start(|spi| {
+                spi.enable_dma_rx();
+            });
+        });
+
         loop {
+            asm::nop();
             // Ethernet
-            // let status = ctx.local.dp83848.check_phy_status();
             let status = ctx.local.dp83848.poll_link();
             rprintln!("status: {}", status);
             if status == 0 {
                 ctx.local.link_led.set_low();
             }
+
+            // let mut spi_buffer = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+
+            // ctx.local.nss.set_low();
+            // let result = ctx.local.spi.transfer(&mut spi_buffer);
+            // match result {
+            //     Ok(values) => {
+            //         for (i, &value) in values.iter().enumerate() {
+            //             rprintln!("Received data {}: {}", i, value);
+            //         }
+            //     }
+            //     Err(e) => rprintln!("Error: {:?}", e),
+            // }
+            // ctx.local.nss.set_high();
+
+            // spi_buffer = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+            // ctx.local.nss.set_low();
+            // let result2 = ctx.local.spi.transfer(&mut spi_buffer);
+            // match result2 {
+            //     Ok(values) => {
+            //         for (i, &value) in values.iter().enumerate() {
+            //             rprintln!("Received data {}: {}", i, value);
+            //         }
+            //         let angle_lsb = ((values[1] & 0x3F) as u16) << 8 | (values[0] as u16);
+            //         rprintln!("angle {}", angle_lsb);
+            //         let error_lsb = (values[1] as u16) >> 6;
+            //         rprintln!("error {}", error_lsb);
+            //         let crc_lsb = (values[7] as u16);
+            //         rprintln!("crc {}", crc_lsb);
+            //         let vgain_lsb = (values[4] as u16);
+            //         rprintln!("vgain {}", vgain_lsb);
+            //         let rollcnt_lsb = (values[6] as u16) & 0x3F;
+            //         rprintln!("rollcnt {}", rollcnt_lsb);
+            //     }
+            //     Err(e) => rprintln!("Error: {:?}", e),
+            // }
+            // ctx.local.nss.set_high();
         }
     }
+
+    /// Runs when new IMU data is ready. Trigger a DMA read.
+    #[task(binds = EXTI4, shared = [cs_imu, dma, spi1], priority = 1)]
+    fn imu_data_isr(cx: imu_data_isr::Context) {
+        gpio::clear_exti_interrupt(4);
+
+        (cx.shared.cs_imu, cx.shared.spi1).lock(|cs_imu, spi| {
+            imu::read_imu_dma(imu::READINGS_START_ADDR, spi, cs_imu);
+        });
+    }
+
+    #[task(binds = DMA1_CH2, shared = [spi1, cs_imu, imu_filters], priority = 2)]
+    /// This ISR Handles received data from the IMU, after DMA transfer is complete. This occurs whenever
+    /// we receive IMU data; it triggers the inner PID loop.
+    fn imu_tc_isr(mut cx: imu_tc_isr::Context) {
+        dma::clear_interrupt(
+            DmaPeriph::Dma1,
+            DmaChannel::C1,
+            DmaInterrupt::TransferComplete,
+        );
+
+        (cx.shared.spi).lock(|dma, spi| {
+            // Note that this step is mandatory, per STM32 RM.
+            spi.stop_dma(DmaChannel::C1, Some(DmaChannel::C2), DmaPeriph::Dma1);
+        });
+
+        cx.shared.cs_imu.lock(|cs| {
+            cs.set_high();
+        });
+
+        let mut imu_data = imu::ImuReadings::from_buffer(unsafe { &IMU_READINGS });
+
+        // Apply our lowpass filter.
+        cx.shared.imu_filters.lock(|imu_filters| {
+            imu_filters.apply(&mut imu_data);
+        });
+    }
+
+    #[task(binds=DMA1_STR1, shared = [spi_write_transfer, nss], priority=2)]
+    fn tx_dma_complete(ctx: tx_dma_complete::Context) {
+        // If desired, the transfer can scheduled again here to continue transmitting.
+        (ctx.shared.spi_write_transfer, ctx.shared.nss).lock(|spi_write_transfer, cs| {
+            spi_write_transfer.clear_transfer_complete_interrupt();
+            spi_write_transfer.pause(|spi| {
+                // At this point, the DMA transfer is done, but the data is still in the SPI output
+                // FIFO. Wait for it to complete before disabling CS.
+                while spi.inner().sr.read().txc().bit_is_clear() {}
+                cs.set_high();
+
+                //ここで読む
+            });
+        });
+    }
+
+    // #[task(binds = DMA1_STR2, shared = [spi_read_transfer], priority = 2)]
+    // fn rx_dma_complete(ctx: rx_dma_complete::Context) {
+    //     ctx.shared.spi_read_transfer.lock(|spi_read_transfer| {
+    //         spi_read_transfer.clear_transfer_complete_interrupt();
+    //     });
+    // }
 
     #[task(binds = ETH, local = [net])]
     fn ethernet_event(ctx: ethernet_event::Context) {

@@ -1,0 +1,126 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  six:
+    name: Thumbv6
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mcu:
+          - g030
+          - g031
+          - g041
+#          - g050
+#          - g051
+#          - g061
+          - g070
+          - g071
+          - g081
+#          - g0b0
+#          - g0b1
+#          - g0c1
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: thumbv6m-none-eabi
+          components: rust-src
+          override: true
+      - name: Build
+        run: cargo build --features=${{ matrix.mcu }},usb --lib
+      - name: Run tests
+        run: cargo test --features=${{ matrix.mcu }},usb --lib
+
+  seven:
+    name: Thumbv7
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mcu:
+          - l4x1
+          - l4x2
+          - l412
+          - l4x3
+          - l4x5
+          - l4x6
+          - f301
+          - f302
+          - f303
+          - f373
+          - f3x4
+          - f401
+          - f405
+          - f407
+          - f410
+          - f411
+          - f412
+          - f413
+          - f427
+          - f429
+          - f446
+          - f469
+          - g431
+          - g441
+          - g471
+          - g473
+          - g474
+          - g483
+          - g484
+          - g491
+          - g4a1
+          - h735
+          - h743
+          - h743v
+          - h747cm4
+          - h747cm7
+          - h753
+          - h753v
+#          - h7b3
+          - wb55
+          - wle5
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: thumbv7em-none-eabihf
+          components: rust-src
+          override: true
+      - name: Build
+        run: cargo build --features=${{ matrix.mcu }},usb --lib
+      - name: Run tests
+        run: cargo test --features=${{ matrix.mcu }},usb --lib
+
+  eight:
+      name: Thumbv8
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          mcu:
+            - l552
+            - l562
+
+      steps:
+        - uses: actions/checkout@v2
+        - uses: actions-rs/toolchain@v1
+          with:
+            toolchain: stable
+            target: thumbv8m.main-none-eabihf
+            components: rust-src
+            override: true
+        - name: Build
+          run: cargo build --features=${{ matrix.mcu }},usb --lib
+        - name: Run tests
+          run: cargo test --features=${{ matrix.mcu }},usb --lib
