@@ -10,7 +10,7 @@ use cortex_m::peripheral::NVIC;
 use cortex_m::delay::Delay;
 use cortex_m_rt::entry;
 use hal::{
-    clocks::Clocks,
+    clocks::{Clocks, PllCfg},
     dma::{self, Dma, DmaChannel, DmaInput, DmaInterrupt, DmaPeriph},
     gpio::{self, Pin, PinMode, Port},
     low_power,
@@ -35,7 +35,21 @@ fn main() -> ! {
 
     let mut clock_cfg = Clocks::default(); //400MHz
 
-    clock_cfg.pll1.pllq_en = true;
+    // ---------------clock---------------
+    // hsi(pllsrc) / divm -> pll1-ref-clk
+    // pll1-ref-clk * divp(or divq or divr) -> pll1p(or pll1q or pll1r) clk
+    clock_cfg.pll1 = PllCfg {
+        enabled: true,
+        // fractional: false,
+        pllp_en: true,
+        pllq_en: true,
+        pllr_en: true,
+        divm: 32,// 400MHz / 32 = 12.5MHz
+        divn: 400,
+        divp: 2,// pll1p clock = 12.5 * 2 = 25MHz
+        divq: 8,// pll1q clock = 12.5 * 8 = 100MHz
+        divr: 2,// pll1r clock = 12.5 * 2 = 25MHz
+    };
 
     clock_cfg.setup().unwrap();
 
@@ -59,7 +73,7 @@ fn main() -> ! {
     let mut spi = Spi::new(
         dp.SPI2,
         spi_cfg,
-        BaudRate::Div256, // Eg 80Mhz apb clock / 32 = 2.5Mhz SPI clock.
+        BaudRate::Div64, // 100MHz / 64 = 1.5625MHz
     );
 
     // Set up DMA, for nonblocking (generally faster) conversion transfers:
@@ -108,13 +122,11 @@ fn main() -> ! {
 
     led.set_high();
 
-    let mut write_buf: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
-    let mut read_buf: [u8; 8] = [0; 8];
+    let mut spi_buf: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
     cs.set_low();
     delay.delay_us(1_00);
-    spi.write(&write_buf).ok();
-    spi.transfer(&mut read_buf).ok();
-    let values = read_buf;
+    spi.transfer(&mut spi_buf).ok();
+    let values = spi_buf;
     for (i, &value) in values.iter().enumerate() {
         rprintln!("Received data 1 {}: {}", i, value);
     }
@@ -122,13 +134,11 @@ fn main() -> ! {
 
     loop {
         delay.delay_us(8_00);
-        write_buf = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
-        read_buf = [0; 8];
+        spi_buf = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
         cs.set_low();
         delay.delay_us(1_00);
-        spi.write(&write_buf).ok();
-        spi.transfer(&mut read_buf).ok();
-        let values = read_buf;
+        spi.transfer(&mut spi_buf).ok();
+        let values = spi_buf;
         for (i, &value) in values.iter().enumerate() {
             rprintln!("Received data 2 {}: {}", i, value);
         }
