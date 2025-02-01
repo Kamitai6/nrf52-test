@@ -10,7 +10,7 @@ panic-rtt-target = { version = "0.1.3" }
 # heapless = { version = "0.8", default-features = false }
 # smoltcp = { version = "0.11.0", default-features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"]}
 # smoltcp = { version = "0.12.0", default-features = false, features = ["phy-raw_socket","socket-raw","socket-udp","proto-ipv4"]}
-# rtic = { version = "2.1.1", features = ["thumbv7-backend"] }
+rtic = { version = "2.1.1", features = ["thumbv7-backend"] }
 # stm32h7xx-hal = {version = "0.16.0", path = "./stm32h7xx-hal", features = ["stm32h743v","rt","ethernet"]}
 cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.3"
