@@ -18,7 +18,7 @@ hal = { package = "stm32-hal2", version = "1.8.5", features = ["h743v", "h7rt"]}
 
 # cargo build/run
 [profile.dev]
-opt-level = 1
+opt-level = 0
 codegen-units = 16
 debug = true
 debug-assertions = true
