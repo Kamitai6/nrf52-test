@@ -25,8 +25,10 @@ use hal::{
 };
 
 
-#[link_section = ".sram3"]
+#[link_section = ".axisram"]
 static mut SPI_READ_BUF: [u8; 8] = [0; 8];
+
+#[link_section = ".axisram"]
 static mut SPI_WRITE_BUF: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
 
 #[app(device = pac, peripherals = false)]
