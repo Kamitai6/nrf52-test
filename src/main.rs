@@ -6,273 +6,96 @@ use rtt_target::{rprintln, rtt_init_print};
 
 use core::cell::{Cell, RefCell};
 
-use rtic::app;
-
-// use cmsis_dsp_api as dsp_api;
-// use cmsis_dsp_sys as dsp_sys;
-// use cortex_m::peripheral::NVIC;
-// use cortex_m::delay::Delay;
-// use cortex_m::interrupt::free;
-// use cortex_m_rt::entry;
+use cortex_m::peripheral::NVIC;
+use cortex_m::delay::Delay;
+use cortex_m_rt::entry;
 use hal::{
     clocks::{Clocks, PllCfg},
     dma::{self, Dma, DmaChannel, DmaInput, DmaInterrupt, DmaPeriph},
     gpio::{self, Pin, PinMode, Port},
     low_power,
-    pac::{self, DMA1, SPI2, interrupt},
+    pac::{self, interrupt},
     prelude::*,
     spi::{self, BaudRate, Spi, SpiConfig, SpiMode},
 };
 
-
-#[link_section = ".axisram"]
+// Byte 0 is for the address we pass in the `write` transfer; relevant data is in the rest of
+// the values.
 static mut SPI_READ_BUF: [u8; 8] = [0; 8];
-
-#[link_section = ".axisram"]
 static mut SPI_WRITE_BUF: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
 
-#[app(device = pac, peripherals = false)]
-mod app {
-    use super::*;
+#[entry]
+fn main() -> ! {
+    rtt_init_print!();
+    rprintln!("Start!!!");
+    // Set up CPU peripherals
+    let mut cp = cortex_m::Peripherals::take().unwrap();
+    // Set up microcontroller peripherals
+    let mut dp = pac::Peripherals::take().unwrap();
 
-    #[shared]
-    struct Shared {
-        dma: Dma<DMA1>,
-        spi2: Spi<SPI2>,
-        nss: Pin,
-    }
+    let mut clock_cfg = Clocks::default(); //400MHz
 
-    #[local]
-    struct Local {}
+    // ---------------clock---------------
+    // hsi(pllsrc) / divm -> pll1-ref-clk
+    // pll1-ref-clk * divp(or divq or divr) -> pll1p(or pll1q or pll1r) clk
+    clock_cfg.pll1 = PllCfg {
+        enabled: true,
+        // fractional: false,
+        pllp_en: true,
+        pllq_en: true,
+        pllr_en: true,
+        divm: 32,
+        divn: 200,
+        divp: 2,// pll1p clock = 12.5 * 2 = 25MHz
+        divq: 4,// pll1q clock = 12.5 * 8 = 100MHz
+        divr: 2,// pll1r clock = 12.5 * 2 = 25MHz
+    };
 
-    #[init]
-    fn init(mut ctx: init::Context) -> (Shared, Local) {
-        rtt_init_print!();
-        rprintln!("Start!!!");
-        // Set up CPU peripherals
-        let mut cp = ctx.core;
-        // Set up microcontroller peripherals
-        let mut dp = pac::Peripherals::take().unwrap();
+    clock_cfg.setup().unwrap();
 
-        let mut clock_cfg = Clocks::default(); //400MHz
+    // Configure pins for Spi
+    let _sck = Pin::new(Port::A, 12, PinMode::Alt(12));
+    let _miso = Pin::new(Port::B, 14, PinMode::Alt(14));
+    let _mosi = Pin::new(Port::B, 15, PinMode::Alt(15));
 
-        // ---------------clock---------------
-        // hsi(pllsrc) / divm -> pll1-ref-clk
-        // pll1-ref-clk * divp(or divq or divr) -> pll1p(or pll1q or pll1r) clk
-        clock_cfg.pll1 = PllCfg {
-            enabled: true,
-            // fractional: false,
-            pllp_en: true,
-            pllq_en: true,
-            pllr_en: true,
-            divm: 32,// 400MHz / 32 = 12.5MHz
-            divn: 400,
-            divp: 2,// pll1p clock = 12.5 * 2 = 25MHz
-            divq: 8,// pll1q clock = 12.5 * 8 = 100MHz
-            divr: 2,// pll1r clock = 12.5 * 2 = 25MHz
-        };
+    let mut cs = Pin::new(Port::A, 11, PinMode::Output);
 
-        clock_cfg.setup().unwrap();
+    let mut led = Pin::new(Port::D, 0, PinMode::Output);
+    let mut delay = Delay::new(cp.SYST, clock_cfg.systick());
 
-        // Configure pins for Spi
-        let _sck = Pin::new(Port::A, 12, PinMode::Alt(12));
-        let _miso = Pin::new(Port::B, 14, PinMode::Alt(14));
-        let _mosi = Pin::new(Port::B, 15, PinMode::Alt(15));
-
-        let mut nss = Pin::new(Port::A, 11, PinMode::Output);
-        nss.set_high();
-        let mut led = Pin::new(Port::D, 0, PinMode::Output);
-        led.set_high();
-
+    let spi_cfg = SpiConfig {
+        mode: SpiMode::mode1(),
         // `SpiConfig::default` is mode 0, full duplex, with software CS.
-        let spi2_cfg = SpiConfig {
-            mode: SpiMode::mode1(),
-            ..Default::default()
-        };
+        ..Default::default()
+    };
 
-        // Set up an SPI peripheral, running at 4Mhz, in SPI mode 0.
-        let mut spi2 = Spi::new(
-            dp.SPI2,
-            spi2_cfg,
-            BaudRate::Div64, // 100MHz / 64 = 1.5625MHz
-        );
+    // Set up an SPI peripheral, running at 4Mhz, in SPI mode 0.
+    let mut spi = Spi::new(
+        dp.SPI2,
+        spi_cfg,
+        BaudRate::Div64, // 100MHz / 64 = 1.5625MHz
+    );
 
-        let mut dma = Dma::new(dp.DMA1);
+    cs.set_high();
+    led.set_high();
 
-        dma::mux(DmaPeriph::Dma1, DmaChannel::C1, DmaInput::Spi2Tx);
-        dma::mux(DmaPeriph::Dma1, DmaChannel::C2, DmaInput::Spi2Rx);
-
-        dma.enable_interrupt(DmaChannel::C1, DmaInterrupt::TransferComplete);
-        dma.enable_interrupt(DmaChannel::C1, DmaInterrupt::TransferError);
-        dma.enable_interrupt(DmaChannel::C2, DmaInterrupt::TransferComplete);
-
-        let rcc = unsafe { &*pac::RCC::ptr() };
-        let dma1_en = rcc.ahb1enr.read().dma1en().bit_is_set();
-        let dma2_en = rcc.ahb1enr.read().dma2en().bit_is_set();
-        rprintln!("DMA1 EN: {}, DMA2 EN: {}", dma1_en, dma2_en);
-
-        (
-            Shared {
-                dma,
-                spi2,
-                nss,
-            },
-            Local {},
-        )
+    let mut spi_buf: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+    cs.set_low();
+    // delay.delay_us(1_00);
+    spi.transfer(&mut spi_buf).ok();
+    let values = spi_buf;
+    for (i, &value) in values.iter().enumerate() {
+        rprintln!("Received data 1 {}: {}", i, value);
     }
+    cs.set_high();
 
-    #[idle(shared = [spi2, nss])]
-    fn idle(mut ctx: idle::Context) -> ! {
-        (ctx.shared.nss, ctx.shared.spi2).lock(|nss, spi2| {
-            // unsafe {
-            //     SPI_WRITE_BUF = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
-            //     // SPI_WRITE_BUF = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
-            // }
-    
-            nss.set_low();
-    
-            unsafe {
-                spi2.write_dma(
-                    &SPI_WRITE_BUF,
-                    DmaChannel::C1,
-                    dma::ChannelCfg {
-                        priority: dma::Priority::Medium,
-                        circular: dma::Circular::Disabled,
-                        periph_incr: dma::IncrMode::Disabled,
-                        mem_incr: dma::IncrMode::Enabled,
-                    },
-                    DmaPeriph::Dma1,
-                );
-                // spi2.transfer_dma(
-                //     &SPI_WRITE_BUF,
-                //     &mut SPI_READ_BUF,
-                //     DmaChannel::C1,
-                //     DmaChannel::C2,
-                //     dma::ChannelCfg {
-                //         priority: dma::Priority::Medium,
-                //         circular: dma::Circular::Disabled,
-                //         periph_incr: dma::IncrMode::Disabled,
-                //         mem_incr: dma::IncrMode::Enabled,
-                //     },
-                //     dma::ChannelCfg {
-                //         priority: dma::Priority::Medium,
-                //         circular: dma::Circular::Disabled,
-                //         periph_incr: dma::IncrMode::Disabled,
-                //         mem_incr: dma::IncrMode::Enabled,
-                //     },
-                //     DmaPeriph::Dma1,
-                // );
-
-                let cr1 = spi2.regs.cr1.read().bits();
-                let cr2 = spi2.regs.cr2.read().bits();
-                let cfg1 = spi2.regs.cfg1.read().bits();
-                let cfg2 = spi2.regs.cfg2.read().bits();
-
-                rprintln!("SPI CR1: {:#010x}", cr1);
-                rprintln!("SPI CR2: {:#010x}", cr2);
-                rprintln!("SPI CFG1: {:#010x}", cfg1);
-                rprintln!("SPI CFG2: {:#010x}", cfg2);
-            }
-
-            let dmamux1 = unsafe { &*pac::DMAMUX1::ptr() };
-            let ccr0 = dmamux1.ccr[0].read().bits();
-            let ccr1 = dmamux1.ccr[1].read().bits();
-            let ccr2 = dmamux1.ccr[2].read().bits();
-            let csr = dmamux1.csr.read().bits();
-            let rgcr0 = dmamux1.rgcr[0].read().bits();
-            let rgcr1 = dmamux1.rgcr[1].read().bits();
-            let rgcr2 = dmamux1.rgcr[2].read().bits();
-            let rgsr = dmamux1.rgsr.read().bits();
-
-            rprintln!("dmamux ccr0: {:#010x}", ccr0);
-            rprintln!("dmamux ccr1: {:#010x}", ccr1);
-            rprintln!("dmamux ccr2: {:#010x}", ccr2);
-            rprintln!("dmamux csr: {:#010x}", csr);
-            rprintln!("dmamux rgcr0: {:#010x}", rgcr0);
-            rprintln!("dmamux rgcr1: {:#010x}", rgcr1);
-            rprintln!("dmamux rgcr2: {:#010x}", rgcr2);
-            rprintln!("dmamux rgsr: {:#010x}", rgsr);
-            rprintln!("-----------");
-
-            let dma1 = unsafe { &*pac::DMA1::ptr() };
-            let lisr = dma1.lisr.read().bits();
-            let hisr = dma1.hisr.read().bits();
-            let cr0 = dma1.st[0].cr.read().bits();
-            let cr1 = dma1.st[1].cr.read().bits();
-            let cr2 = dma1.st[2].cr.read().bits();
-            let par0 = dma1.st[0].par.read().bits();
-            let par1 = dma1.st[1].par.read().bits();
-            let par2 = dma1.st[2].par.read().bits();
-
-            rprintln!("dma1 lisr: {:#010x}", lisr);
-            rprintln!("dma1 hisr: {:#010x}", hisr);
-            rprintln!("dma1 cr0: {:#010x}", cr0);
-            rprintln!("dma1 cr1: {:#010x}", cr1);
-            rprintln!("dma1 cr2: {:#010x}", cr2);
-            rprintln!("dma1 par0: {:#010x}", par0);
-            rprintln!("dma1 par1: {:#010x}", par1);
-            rprintln!("dma1 par2: {:#010x}", par2);
-
-            rprintln!("transferd!!!");
-        });
-
-        // let mut nss_is_high = false;
-        // ctx.shared.nss.lock(|nss| {
-        //     nss_is_high = nss.is_high();
-        // });
-        // if nss_is_high {
-        //     (ctx.shared.nss, ctx.shared.spi2).lock(|nss, spi2| {
-        //         unsafe {
-        //             SPI_WRITE_BUF = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
-        //         }
-        
-        //         nss.set_low();
-        
-        //         unsafe {
-        //             spi2.transfer_dma(
-        //                 &SPI_WRITE_BUF,
-        //                 &mut SPI_READ_BUF,
-        //                 DmaChannel::C1,
-        //                 DmaChannel::C2,
-        //                 Default::default(),
-        //                 Default::default(),
-        //                 DmaPeriph::Dma1,
-        //             );
-        //         }
-        //     });
-        // }
-
-        loop {
-        }
-    }
-
-    #[task(binds = DMA1_STR1, shared = [dma], priority = 2)]
-    fn test(mut ctx: test::Context) {
-        (ctx.shared.dma).lock(|dma| {
-            let is = dma.transfer_is_complete(DmaChannel::C1);
-            rprintln!("transfer is complete? : {}", is);
-        });
-        rprintln!("transmit complete");
-    }
-
-    #[task(binds = DMA1_STR2, shared = [spi2, nss], priority = 2)]
-    fn imu_tc_isr(mut ctx: imu_tc_isr::Context) {
-        dma::clear_interrupt(
-            DmaPeriph::Dma1,
-            DmaChannel::C1,
-            DmaInterrupt::TransferComplete,
-        );
-
-        (ctx.shared.spi2).lock(|spi| {
-            // Note that this step is mandatory, per STM32 RM.
-            spi.stop_dma(DmaChannel::C1, Some(DmaChannel::C2), DmaPeriph::Dma1);
-        });
-
-        ctx.shared.nss.lock(|nss| {
-            nss.set_high();
-        });
-
-        let values = unsafe { SPI_READ_BUF };
+    loop {
+        delay.delay_us(8_00);
+        spi_buf = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+        cs.set_low();
+        // delay.delay_us(1_00);
+        spi.transfer(&mut spi_buf).ok();
+        let values = spi_buf;
         for (i, &value) in values.iter().enumerate() {
             rprintln!("Received data 2 {}: {}", i, value);
         }
@@ -286,5 +109,6 @@ mod app {
         rprintln!("vgain {}", vgain_lsb);
         let rollcnt_lsb = (values[6] as u16) & 0x3F;
         rprintln!("rollcnt {}", rollcnt_lsb);
+        cs.set_high();
     }
 }
