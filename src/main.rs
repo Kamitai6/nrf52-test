@@ -54,9 +54,9 @@ fn main() -> ! {
     clock_cfg.setup().unwrap();
 
     // Configure pins for Spi
-    let _sck = Pin::new(Port::A, 12, PinMode::Alt(12));
-    let _miso = Pin::new(Port::B, 14, PinMode::Alt(14));
-    let _mosi = Pin::new(Port::B, 15, PinMode::Alt(15));
+    let _sck = Pin::new(Port::A, 12, PinMode::Alt(5));
+    let _miso = Pin::new(Port::B, 14, PinMode::Alt(5));
+    let _mosi = Pin::new(Port::B, 15, PinMode::Alt(5));
 
     let mut cs = Pin::new(Port::A, 11, PinMode::Output);
 
@@ -75,6 +75,29 @@ fn main() -> ! {
         spi_cfg,
         BaudRate::Div64, // 100MHz / 64 = 1.5625MHz
     );
+
+    let rcc = unsafe { &*pac::RCC::ptr() };
+    rprintln!("ahb1enr: {:#010x}", rcc.ahb1enr.read().bits());
+    rprintln!("ahb1lpenr: {:#010x}", rcc.ahb1lpenr.read().bits());
+    rprintln!("ahb2enr: {:#010x}", rcc.ahb2enr.read().bits());
+    rprintln!("ahb2lpenr: {:#010x}", rcc.ahb2lpenr.read().bits());
+    rprintln!("ahb3enr: {:#010x}", rcc.ahb3enr.read().bits());
+    rprintln!("ahb3lpenr: {:#010x}", rcc.ahb3lpenr.read().bits());
+    rprintln!("ahb4enr: {:#010x}", rcc.ahb4enr.read().bits());
+    rprintln!("ahb4lpenr: {:#010x}", rcc.ahb4lpenr.read().bits());
+
+    rprintln!("ahb1enr: {:#010x}", rcc.ahb1enr.read().bits());
+    rprintln!("ahb1enr: {:#010x}", rcc.ahb1enr.read().bits());
+    rprintln!("apb1henr: {:#010x}", rcc.apb1henr.read().bits());
+    rprintln!("apb1lenr: {:#010x}", rcc.apb1lenr.read().bits());
+    rprintln!("apb1hlpenr: {:#010x}", rcc.apb1hlpenr.read().bits());
+    rprintln!("apb1llpenr: {:#010x}", rcc.apb1llpenr.read().bits());
+    rprintln!("apb2lpenr: {:#010x}", rcc.apb2lpenr.read().bits());
+    rprintln!("apb2enr: {:#010x}", rcc.apb2enr.read().bits());
+    rprintln!("apb3enr: {:#010x}", rcc.apb3enr.read().bits());
+    rprintln!("apb3lpenr: {:#010x}", rcc.apb3lpenr.read().bits());
+    rprintln!("apb4enr: {:#010x}", rcc.apb4enr.read().bits());
+    rprintln!("apb4lpenr: {:#010x}", rcc.apb4lpenr.read().bits());
 
     cs.set_high();
     led.set_high();
