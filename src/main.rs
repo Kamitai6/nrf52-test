@@ -158,7 +158,40 @@ fn main() -> ! {
         }
 
         loop {
-            
+            delay.delay_us(8_00);
+            free(|cs|{
+                let mut s = NSS.borrow(cs).borrow_mut();
+                let nss = s.as_mut().unwrap();
+                if nss.is_high() {
+                    let mut s = SPI.borrow(cs).borrow_mut();
+                    let spi2 = s.as_mut().unwrap();
+                    
+                    nss.set_low();
+                    
+                    unsafe {
+                        SPI_WRITE_BUF = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+                        spi2.transfer_dma(
+                            &SPI_WRITE_BUF,
+                            &mut SPI_READ_BUF,
+                            DmaChannel::C1,
+                            DmaChannel::C2,
+                            dma::ChannelCfg {
+                                priority: dma::Priority::Medium,
+                                circular: dma::Circular::Disabled,
+                                periph_incr: dma::IncrMode::Disabled,
+                                mem_incr: dma::IncrMode::Enabled,
+                            },
+                            dma::ChannelCfg {
+                                priority: dma::Priority::Medium,
+                                circular: dma::Circular::Disabled,
+                                periph_incr: dma::IncrMode::Disabled,
+                                mem_incr: dma::IncrMode::Enabled,
+                            },
+                            DmaPeriph::Dma1,
+                        );
+                    }
+                }
+            });
         }
 
         // Mono::start(cx.core.SYST, 36_000_000);
