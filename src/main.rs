@@ -4,15 +4,14 @@
 use panic_rtt_target as _;
 use rtt_target::{rprintln, rtt_init_print};
 
-use cortex_m::asm;
 use cortex_m_rt::entry;
-use stm32h7xx_hal::{pac, prelude::*};
-
+use stm32h7xx_hal::{adc, delay::Delay, pac, prelude::*, rcc::rec::AdcClkSel};
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    let dp = pac::Peripherals::take().expect("Cannot take peripherals");
+    let cp = cortex_m::Peripherals::take().unwrap();
+    let dp = pac::Peripherals::take().unwrap();
 
     // Constrain and Freeze power
     rprintln!("Setup PWR...                  ");
@@ -22,63 +21,51 @@ fn main() -> ! {
     // Constrain and Freeze clock
     rprintln!("Setup RCC...                  ");
     let rcc = dp.RCC.constrain();
-    let ccdr = rcc.sys_ck(8.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
-    // Acquire the GPIOA and GPIOB peripherals. This also enables the clocks for
-    // these peripherals in the RCC register.
-    let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
-    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
-    let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
+    // We need to configure a clock for adc_ker_ck_input. The default
+    // adc_ker_ck_input is pll2_p_ck, but we will use per_ck. per_ck is sourced
+    // from the 64MHz HSI
+    //
+    // adc_ker_ck_input is then divided by the ADC prescaler to give f_adc. The
+    // maximum f_adc is 50MHz
+    let mut ccdr = rcc.sys_ck(100.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
-    // Select PWM output pins
-    // let pins = (
-    //     gpioa.pa8.into_alternate(),
-    //     gpioa.pa9.into_alternate(),
-    //     gpioa.pa10.into_alternate(),
-    // );
+    // Switch adc_ker_ck_input multiplexer to per_ck
+    ccdr.peripheral.kernel_adc_clk_mux(AdcClkSel::Per);
 
     rprintln!("");
-    rprintln!("stm32h7xx-hal example - PWM");
+    rprintln!("stm32h7xx-hal example - ADC");
     rprintln!("");
 
-    // // Configure PWM at 10kHz
-    // let (mut pwm, ..) =
-    //     dp.TIM1
-    //         .pwm(pins, 10.kHz(), ccdr.peripheral.TIM1, &ccdr.clocks);
+    let mut delay = Delay::new(cp.SYST, ccdr.clocks);
 
-    // // Output PWM on PA8
-    // let max = pwm.get_max_duty();
-    // pwm.set_duty(max / 2);
-
-    // rprintln!("50%");
-    // pwm.enable();
-    // asm::bkpt();
-
-    // rprintln!("25%");
-    // pwm.set_duty(max / 4);
-    // asm::bkpt();
-
-    // rprintln!("12.5%");
-    // pwm.set_duty(max / 8);
-    // asm::bkpt();
-
-    // rprintln!("100%");
-    // pwm.set_duty(max);
-    // asm::bkpt();
-
-    let mut pwm = dp.TIM1.pwm(
-        gpioe.pe9.into_alternate(),
-        10.kHz(),
-        ccdr.peripheral.TIM1,
+    // Setup ADC
+    let mut adc1 = adc::Adc::adc1(
+        dp.ADC1,
+        4.MHz(),
+        &mut delay,
+        ccdr.peripheral.ADC12,
         &ccdr.clocks,
-    );
+    )
+    .enable();
+    adc1.set_resolution(adc::Resolution::SixteenBit);
 
-    // Output PWM on PB14
-    let max = pwm.get_max_duty();
-    pwm.set_duty(max / 1);
-    pwm.enable();
+    // We can't use ADC2 here because ccdr.peripheral.ADC12 has been
+    // consumed. See examples/adc12.rs
+
+    // Setup GPIOC
+    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
+
+    // Configure pc0 as an analog input
+    let mut channel = gpiob.pb1.into_analog(); // ANALOG IN 10
 
     loop {
-        cortex_m::asm::nop()
+        let data: u32 = adc1.read(&mut channel).unwrap();
+        // voltage = reading * (vref/resolution)
+        rprintln!(
+            "ADC reading: {}, voltage for nucleo: {}",
+            data,
+            data as f32 * (3.3 / adc1.slope() as f32)
+        );
     }
 }
