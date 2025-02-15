@@ -4,129 +4,81 @@
 use panic_rtt_target as _;
 use rtt_target::{rprintln, rtt_init_print};
 
-// use rtic::app;
-
-// use cmsis_dsp_api as dsp_api;
-// use cmsis_dsp_sys as dsp_sys;
-
-use core::cell::{Cell, RefCell};
-use cortex_m::interrupt::{free, Mutex};
-use cortex_m::delay::Delay;
-use cortex_m::peripheral::NVIC;
+use cortex_m::asm;
 use cortex_m_rt::entry;
-use hal::{
-    clocks::{Clocks, PllCfg},
-    dma::{self, Dma, DmaChannel, DmaInput, DmaInterrupt, DmaPeriph},
-    gpio::{self, Pin, PinMode, Port},
-    pac::{self, DMA1, SPI2, interrupt},
-    spi::{self, BaudRate, Spi, SpiConfig, SpiMode},
-};
-
-use hal::{
-    // clocks::Clocks,
-    // gpio::{Edge, Pin, PinMode, Port},
-    low_power, 
-    timer::{self,
-        Alignment, UpdateReqSrc, CaptureCompareDma, BasicTimer, CaptureCompare, CountDir, InputSlaveMode, InputTrigger,
-        MasterModeSelection, OutputCompare, TimChannel, Timer, TimerConfig, TimerInterrupt,
-    },
-};
-
-// use rtic_monotonics::systick::prelude::*;
-// use stm32h7xx_hal::timer::Timer;
-
-// systick_monotonic!(Mono, 1000);
-
-#[link_section = ".sram3"]
-static mut SPI_READ_BUF: [u8; 8] = [0; 8];
-
-#[link_section = ".sram3"]
-static mut SPI_WRITE_BUF: [u8; 8] = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
-
-static SPI: Mutex<RefCell<Option<Spi<SPI2>>>> = Mutex::new(RefCell::new(None));
-static NSS: Mutex<RefCell<Option<Pin>>> = Mutex::new(RefCell::new(None));
+use stm32h7xx_hal::{pac, prelude::*};
 
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    rprintln!("Start!!!");
+    let dp = pac::Peripherals::take().expect("Cannot take peripherals");
 
-    let mut cp = cortex_m::Peripherals::take().unwrap();
-    let mut dp = pac::Peripherals::take().unwrap();
+    // Constrain and Freeze power
+    rprintln!("Setup PWR...                  ");
+    let pwr = dp.PWR.constrain();
+    let pwrcfg = pwr.freeze();
 
-    let mut clock_cfg = Clocks::default(); //400MHz
+    // Constrain and Freeze clock
+    rprintln!("Setup RCC...                  ");
+    let rcc = dp.RCC.constrain();
+    let ccdr = rcc.sys_ck(8.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
-    // ---------------clock---------------
-    clock_cfg.pll1 = PllCfg {
-        enabled: true,
-        pllp_en: true,
-        pllq_en: true,
-        pllr_en: true,
-        divm: 32,
-        divn: 200,
-        divp: 2,
-        divq: 4,
-        divr: 2,
-    };
+    // Acquire the GPIOA and GPIOB peripherals. This also enables the clocks for
+    // these peripherals in the RCC register.
+    let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
+    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
+    let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
 
-    clock_cfg.setup().unwrap();
+    // Select PWM output pins
+    // let pins = (
+    //     gpioa.pa8.into_alternate(),
+    //     gpioa.pa9.into_alternate(),
+    //     gpioa.pa10.into_alternate(),
+    // );
 
-    let mut delay = Delay::new(cp.SYST, clock_cfg.systick());
-    // let mut led = Pin::new(Port::D, 0, PinMode::Output);
-    let _pwm_pin = Pin::new(Port::B, 1, PinMode::Alt(1));
+    rprintln!("");
+    rprintln!("stm32h7xx-hal example - PWM");
+    rprintln!("");
 
-    let mut pwm_timer = Timer::new_tim1(
-        dp.TIM1,
-        1_0000.,
-        TimerConfig {
-            auto_reload_preload: true,
-            // Setting auto reload preload allow changing frequency (period) while the timer is running.
-            ..Default::default()
-        },
-        &clock_cfg,
+    // // Configure PWM at 10kHz
+    // let (mut pwm, ..) =
+    //     dp.TIM1
+    //         .pwm(pins, 10.kHz(), ccdr.peripheral.TIM1, &ccdr.clocks);
+
+    // // Output PWM on PA8
+    // let max = pwm.get_max_duty();
+    // pwm.set_duty(max / 2);
+
+    // rprintln!("50%");
+    // pwm.enable();
+    // asm::bkpt();
+
+    // rprintln!("25%");
+    // pwm.set_duty(max / 4);
+    // asm::bkpt();
+
+    // rprintln!("12.5%");
+    // pwm.set_duty(max / 8);
+    // asm::bkpt();
+
+    // rprintln!("100%");
+    // pwm.set_duty(max);
+    // asm::bkpt();
+
+    let mut pwm = dp.TIM1.pwm(
+        gpioe.pe9.into_alternate(),
+        10.kHz(),
+        ccdr.peripheral.TIM1,
+        &ccdr.clocks,
     );
 
-    pwm_timer.enable_pwm_output(TimChannel::C3, OutputCompare::Pwm2, 1.0);
-    // pwm_timer.enable();
+    // Output PWM on PB14
+    let max = pwm.get_max_duty();
+    pwm.set_duty(max / 1);
+    pwm.enable();
 
-    // let mut countdown_timer = Timer::new_tim3(
-    //     dp.TIM3, 
-    //     1., 
-    //     TimerConfig {
-    //         one_pulse_mode: true,
-    //         update_request_source: UpdateReqSrc::Any,
-    //         auto_reload_preload: true,
-    //         alignment: Alignment::Edge,
-    //         capture_compare_dma: CaptureCompareDma::Ccx,
-    //         direction: CountDir::Down,
-    //     }, 
-    //     &clock_cfg
-    // );
-    // countdown_timer.enable_interrupt(TimerInterrupt::Update); // Enable update event interrupts.
-
-    // countdown_timer.enable(); // Start the counter.
-
-    // unsafe {
-    //     NVIC::unmask(pac::Interrupt::TIM3);
-    // }
-
-    let mut pwm = 1.0;
     loop {
-        // pwm_timer.set_duty(TimChannel::C3, (pwm_timer.get_max_duty() as f32 * pwm) as u16);
-        // // pwm_timer.enable_pwm_output(TimChannel::C3, OutputCompare::Pwm2, pwm);
-        // delay.delay_ms(1_00);
-        // pwm -= 0.1;
-        // if pwm < 0. {
-        //     pwm = 1.0;
-        // }
+        cortex_m::asm::nop()
     }
 }
-
-// #[interrupt]
-// /// Timer interrupt handler; runs when the countdown period expires.
-// fn TIM3() {
-//     timer::clear_update_interrupt(3);
-
-//     // Do something.
-// }
