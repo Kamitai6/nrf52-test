@@ -13,7 +13,7 @@ use core::any::type_name;
 use cortex_m::{asm, interrupt::{Mutex}};
 use cortex_m_rt::entry;
 use pac::interrupt;
-use stm32h7xx_hal::{pac, prelude::*, spi, timer};
+use stm32h7xx_hal::{pac, prelude::*, spi, timer, gpio};
 use stm32h7xx_hal::{adc, delay::Delay, rcc::rec::AdcClkSel};
 use stm32h7xx_hal::pwm::{self, FaultMonitor, Polarity};
 
@@ -38,6 +38,22 @@ static PWM2: Mutex<RefCell<Option<pwm::Pwm<pac::TIM1, 1, pwm::ComplementaryEnabl
     Mutex::new(RefCell::new(None));
 static PWM3: Mutex<RefCell<Option<pwm::Pwm<pac::TIM1, 2, pwm::ComplementaryEnabled>>>> =
     Mutex::new(RefCell::new(None));
+
+fn transfer_spi(nss: &mut gpio::Pin<'A', 15, gpio::Output>, spi: &mut spi::Spi<pac::SPI3, spi::Enabled, u16>, spi_buffer: &mut [u16; 1]) {
+    nss.set_low();
+    // led.set_low();
+    let result = spi.transfer(spi_buffer);
+    match result {
+        Ok(values) => {
+            for (i, &value) in values.iter().enumerate() {
+                rprintln!("Received data {}: {:#018b}", i, value);
+            }
+        }
+        Err(e) => rprintln!("Error: {:?}", e),
+    }
+    nss.set_high();
+    // led.set_high();
+}
 
 #[entry]
 fn main() -> ! {
@@ -71,10 +87,12 @@ fn main() -> ! {
     let mut nss = gpioa.pa15.into_push_pull_output();
 
     let mut en_gate = gpioa.pa4.into_push_pull_output();
-    en_gate.set_high();
-
     let mut led = gpiod.pd0.into_push_pull_output();
     let mut delay = cp.SYST.delay(ccdr.clocks);
+
+    // en_gate.set_low();
+    en_gate.set_high();
+    // delay.delay_ms(100_u16);
 
     let mut adc3 = adc::Adc::adc3(
         dp.ADC3,
@@ -146,23 +164,29 @@ fn main() -> ! {
     nss.set_high();
     led.set_high();
 
-    delay.delay_us(100_u16);
+    rprintln!("high daze: {}", en_gate.is_set_high() as u8);
+    rprintln!("low daze: {}", en_gate.is_set_low() as u8);
 
-    let mut spi_buffer: [u16; 1] = [(0b1 << 15) | (0b0000110 << 8) | 0b00000000]; //fault statusを読みたい
+    // en_gate.set_high();
+    // delay.delay_ms(1000_u16);
 
-    nss.set_low();
-    led.set_low();
-    let result = spi.transfer(&mut spi_buffer);
-    match result {
-        Ok(values) => {
-            for (i, &value) in values.iter().enumerate() {
-                rprintln!("Received data {}: {:#018b}", i, value);
-            }
-        }
-        Err(e) => rprintln!("Error: {:?}", e),
-    }
-    nss.set_high();
-    led.set_high();
+    let mut spi_buffer: [u16; 1] = [0];
+
+    spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000]; // read fault 
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000001 << 8) | 0b00000000]; // read fault 
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000010 << 8) | 0b00000000]; // read fault 
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000011 << 8) | 0b00000000]; // read fault 
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b0 << 15) | (0b0000100 << 8) | 0b10000000]; // write reset error
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // delay.delay_ms(100_u16);
+    spi_buffer = [(0b0 << 15) | (0b0001110 << 8) | 0b00000010]; // write reset error
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000];
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
 
     control_timer.listen(timer::Event::TimeOut);
 
@@ -178,10 +202,10 @@ fn main() -> ! {
         PWM3.borrow(cs).replace(Some(t1c3));
     });
 
-    unsafe {
-        // cp.NVIC.set_priority(pac::interrupt::TIM2, 0);
-        pac::NVIC::unmask(pac::interrupt::TIM2);
-    }
+    // unsafe {
+    //     // cp.NVIC.set_priority(pac::interrupt::TIM2, 0);
+    //     pac::NVIC::unmask(pac::interrupt::TIM2);
+    // }
 
     rprintln!("iser0: {:#010x}", cp.NVIC.iser[0].read());
     rprintln!("iser1: {:#010x}", cp.NVIC.iser[1].read());
@@ -216,9 +240,9 @@ fn main() -> ! {
             let timer = rc.as_ref().unwrap();
             timer.counter() as u64
         });
-        rprintln!("count: {}", ctr);
-        rprintln!("phase: {}", PHASE.load(Ordering::Relaxed));
-        rprintln!("overflows: {}", OVERFLOWS.load(Ordering::SeqCst) as u64);
+        // rprintln!("count: {}", ctr);
+        // rprintln!("phase: {}", PHASE.load(Ordering::Relaxed));
+        // rprintln!("overflows: {}", OVERFLOWS.load(Ordering::SeqCst) as u64);
     }
 }
 
