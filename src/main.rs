@@ -6,6 +6,7 @@ use rtt_target::{rprintln, rtt_init_print};
 
 use cortex_m_rt::entry;
 use stm32h7xx_hal::{pac, prelude::*, spi};
+use stm32h7xx_hal::{adc, delay::Delay, rcc::rec::AdcClkSel};
 
 pub struct Drv8343Reg {
     pub fault_status: u8,
@@ -27,10 +28,11 @@ fn main() -> ! {
     // Constrain and Freeze clock
     rprintln!("Setup RCC...                  ");
     let rcc = dp.RCC.constrain();
-    let ccdr = rcc
+    let mut ccdr = rcc
         .sys_ck(100.MHz())
         .pll1_q_ck(100.MHz())
         .freeze(pwrcfg, &dp.SYSCFG);
+    ccdr.peripheral.kernel_adc_clk_mux(AdcClkSel::Per);
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
@@ -48,6 +50,19 @@ fn main() -> ! {
     let mut led = gpiod.pd0.into_push_pull_output();
     let mut delay = cp.SYST.delay(ccdr.clocks);
 
+    let mut adc3 = adc::Adc::adc3(
+        dp.ADC3,
+        4.MHz(),
+        &mut delay,
+        ccdr.peripheral.ADC3,
+        &ccdr.clocks,
+    )
+    .enable();
+    adc3.set_resolution(adc::Resolution::SixteenBit); //16bit
+
+    // let mut channel = gpioa.pa6.into_analog();
+    let mut channel = gpioc.pc2.into_analog();
+
     let mut spi: spi::Spi<_, _, u16> = dp.SPI3.spi(
         (sck, miso, mosi),
         spi::MODE_2, // or MODE_1?
@@ -60,7 +75,7 @@ fn main() -> ! {
 
     delay.delay_us(100_u16);
 
-    let mut spi_buffer: [u16; 1] = [(0b1 << 15) | (0b0000101 << 8) | 0b00000000]; //fault statusを読みたい
+    let mut spi_buffer: [u16; 1] = [(0b1 << 15) | (0b0000110 << 8) | 0b00000000]; //fault statusを読みたい
 
     nss.set_low();
     led.set_low();
@@ -77,22 +92,12 @@ fn main() -> ! {
     led.set_high();
 
     loop {
-        
-        // delay.delay_us(800_u16);
-
-        // spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000];
-        // nss.set_low();
-        // led.set_low();
-        // let result2 = spi.transfer(&mut spi_buffer);
-        // match result2 {
-        //     Ok(values) => {
-        //         for (i, &value) in values.iter().enumerate() {
-        //             rprintln!("Received data {}: {}", i, value);
-        //         }
-        //     }
-        //     Err(e) => rprintln!("Error: {:?}", e),
-        // }
-        // nss.set_high();
-        // led.set_high();
+        let data: u32 = adc3.read(&mut channel).unwrap();
+        // voltage = reading * (vref/resolution)
+        rprintln!(
+            "ADC reading: {}, voltage: {}",
+            data,
+            data as f32 * (3.3 / adc3.slope() as f32)
+        );
     }
 }
