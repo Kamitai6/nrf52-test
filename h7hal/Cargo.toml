@@ -1,9 +1,0 @@
-[package]
-name = "h7hal"
-version = "0.0.1"
-
-[dependencies]
-cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
-stm32h7 = { version = "^0.15.1", default-features = false }
-
-smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"]}

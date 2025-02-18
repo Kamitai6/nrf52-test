@@ -6,13 +6,10 @@ use cfg_if::cfg_if;
 use cortex_m::{asm, delay::Delay};
 use paste::paste;
 
-#[cfg(any(feature = "f3", feature = "l4"))]
-use crate::dma::DmaInput;
-#[cfg(not(any(feature = "f4", feature = "l552", feature = "h5")))]
 use crate::dma::{self, ChannelCfg, DmaChannel};
 use crate::{
     clocks::Clocks,
-    pac::{self, RCC},
+    pac::{self},
     util::rcc_en_reset,
 };
 
@@ -21,21 +18,10 @@ use crate::{
 // So far, it seems it's always on ADC1, but the channel depends on variant.
 // G474 manual implies you can use *any* ADC on ch 18. G491 shows ADC 1 and 3, ch 18 on both.
 // L4x2 implies ADC1 only.
-cfg_if! {
-    if #[cfg(feature = "h7")] {
-        // These values are from the H723 User manual
-        const VREFINT_ADDR: u32 = 0x1FF1_E860;
-        const VREFINT_VOLTAGE: f32 = 3.3;
-        const VREFINT_CH: u8 = 0; // todo: Unknown. What is it?
-    } else if #[cfg(feature = "g4")] {
-        const VREFINT_ADDR: u32 = 0x1FFF_75AA;
-        const VREFINT_VOLTAGE: f32 = 3.0;
-        const VREFINT_CH: u8 = 18; // G491, G431
-    } else {
-        const VREFINT_ADDR: u32 = 0x1FFF_75AA;
-        const VREFINT_VOLTAGE: f32 = 3.0;
-        const VREFINT_CH: u8 = 0; // L412
-    }
+mod constants {
+    const VREFINT_ADDR: u32 = 0x1FF1_E860;
+    const VREFINT_VOLTAGE: f32 = 3.3;
+    const VREFINT_CH: u8 = 0; // todo: Unknown. What is it?
 }
 
 const MAX_ADVREGEN_STARTUP_US: u32 = 10;
@@ -45,10 +31,6 @@ pub enum AdcDevice {
     One,
     Two,
     Three,
-    #[cfg(feature = "g4")] // todo: Check the specifics.
-    Four,
-    #[cfg(feature = "g4")]
-    Five,
 }
 
 #[derive(Clone, Copy)]
@@ -225,25 +207,6 @@ pub enum Prescaler {
     D256 = 0b1011,
 }
 
-#[cfg(not(feature = "h7"))]
-/// ADC data register alignment
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub enum Align {
-    /// Right alignment of output data
-    Right = 0,
-    /// Left alignment of output data
-    Left = 1,
-}
-
-#[cfg(not(feature = "h7"))]
-impl Default for Align {
-    fn default() -> Self {
-        Align::Right
-    }
-}
-
-#[cfg(feature = "h7")]
 /// ADC data register alignment
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -266,7 +229,6 @@ pub enum Align {
     L15 = 15,
 }
 
-#[cfg(feature = "h7")]
 impl Default for Align {
     fn default() -> Self {
         Align::NoShift
@@ -337,17 +299,60 @@ impl Default for AdcConfig {
     }
 }
 
-/// Represents an Analog to Digital Converter (ADC) peripheral.
-pub struct Adc<R> {
-    /// ADC Register
-    pub regs: R,
-    // Note: We don't own the common regs; pass them mutably where required, since they may be used
-    // by a different ADC.
-    device: AdcDevice,
-    pub cfg: AdcConfig,
-    /// This field is managed internally, and is set up on init.
+enum PERIPHREG {
+    ADC1,
+    ADC2,
+    ADC3,
+}
+
+enum COMMONREG {
+    ADC12_COMMON,
+    ADC3_COMMON,
+}
+
+pub struct Adc<const N: usize> {
+    periph_reg: pac::adc3::RegisterBlock,
+    common_reg: pac::adc3_common::RegisterBlock,
+    pub cfg: Config,
     pub vdda_calibrated: f32,
 }
+
+impl<const N: usize> Adc<N> {
+    pub fn new(cfg: Config) -> Self {
+        let periph_reg = match N {
+            1 => pac::ADC1,
+            2 => pac::ADC2,
+            3 => pac::ADC3,
+            _ => panic!("Unsupported ADC number"),
+        };
+        let common_reg = match N {
+            1 | 2 => pac::ADC12_COMMON,
+            3 => pac::ADC3_COMMON,
+            _ => panic!("Unsupported ADC number"),
+        };
+        let mut result = Self {
+            periph_reg,
+            common_reg,
+            cfg,
+            vdda_calibrated: 0.
+        };
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
+        let periph_register = unsafe { &(*periph_reg::ptr()) };
+        let common_register = unsafe { &(*common_reg::ptr()) };
+    }
+}
+
+/// Represents an Analog to Digital Converter (ADC) peripheral.
+// pub struct Adc<R> {
+//     /// ADC Register
+//     pub regs: R,
+//     // Note: We don't own the common regs; pass them mutably where required, since they may be used
+//     // by a different ADC.
+//     device: AdcDevice,
+//     pub cfg: AdcConfig,
+//     /// This field is managed internally, and is set up on init.
+//     pub vdda_calibrated: f32,
+// }
 
 // todo: Remove this macro, and replace using a `regs` fn like you use in GPIO.
 macro_rules! hal {
@@ -968,12 +973,7 @@ macro_rules! hal {
             /// after `start_conversion`.
             pub fn read_result(&mut self) -> u16 {
                 let ch = 18; // todo temp!!
-                #[cfg(feature = "h7")]
                 self.regs.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() & !(1 << ch)) });
-
-                #[cfg(feature = "l4")]
-                return self.regs.dr.read().bits() as u16;
-                #[cfg(not(feature = "l4"))]
                 return self.regs.dr.read().rdata().bits() as u16;
             }
 
@@ -998,7 +998,6 @@ macro_rules! hal {
                 });
             }
 
-            #[cfg(not(any(feature = "f4", feature = "l552", feature = "h5")))]
             /// Take a reading, using DMA. Sets conversion sequence; no need to set it directly.
             /// Note that the `channel` argument is unused on F3 and L4, since it is hard-coded,
             /// and can't be configured using the DMAMUX peripheral. (`dma::mux()` fn).
@@ -1014,48 +1013,11 @@ macro_rules! hal {
                 // ensures that no conversion is ongoing)
                 self.stop_conversions();
 
-                #[cfg(not(feature = "h7"))]
-                self.regs.cfgr.modify(|_, w| {
-                    w.dmacfg().bit(channel_cfg.circular == dma::Circular::Enabled);
-                    w.dmaen().set_bit()
-                });
-
-                #[cfg(feature = "h7")]
                 self.regs.cfgr.modify(|_, w| {
                     // Note: To use non-DMA after this has been set, need to configure manually.
                     // ie set back to 0b00.
                     w.dmngt().bits(if channel_cfg.circular == dma::Circular::Enabled { 0b11 } else { 0b01 })
                 });
-
-                // L44 RM, Table 41. "DMA1 requests for each channel
-                // todo: DMA2 support.
-                #[cfg(any(feature = "f3", feature = "l4"))]
-                let dma_channel = match self.device {
-                    AdcDevice::One => DmaInput::Adc1.dma1_channel(),
-                    AdcDevice::Two => DmaInput::Adc2.dma1_channel(),
-                    _ => panic!("DMA on ADC beyond 2 is not supported. If it is for your MCU, please submit an issue \
-                or PR on Github.")
-                };
-
-                #[cfg(feature = "l4")]
-                match dma_periph {
-                    dma::DmaPeriph::Dma1 => {
-                        let mut regs = unsafe { &(*pac::DMA1::ptr()) };
-                        match self.device {
-                            AdcDevice::One => dma::channel_select(&mut regs, DmaInput::Adc1),
-                            AdcDevice::Two => dma::channel_select(&mut regs, DmaInput::Adc2),
-                            _ => unimplemented!(),
-                        }
-                    }
-                    dma::DmaPeriph::Dma2 => {
-                        let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-                        match self.device {
-                            AdcDevice::One => dma::channel_select(&mut regs, DmaInput::Adc1),
-                            AdcDevice::Two => dma::channel_select(&mut regs, DmaInput::Adc2),
-                            _ => unimplemented!(),
-                        }
-                    }
-                }
 
                 let mut seq_len = 0;
                 for (i, ch) in adc_channels.iter().enumerate() {
@@ -1102,10 +1064,7 @@ macro_rules! hal {
                 // • Scan sequence is stopped and reset.
                 // • The DMA is stopped.
 
-                #[cfg(feature = "h7")]
                 let num_data = len as u32;
-                #[cfg(not(feature = "h7"))]
-                let num_data = len as u16;
 
                 match dma_periph {
                     dma::DmaPeriph::Dma1 => {
@@ -1122,7 +1081,6 @@ macro_rules! hal {
                             channel_cfg,
                         );
                     }
-                    #[cfg(not(feature = "g0"))]
                     dma::DmaPeriph::Dma2 => {
                         let mut regs = unsafe { &(*pac::DMA2::ptr()) };
                         dma::cfg_channel(
@@ -1197,61 +1155,8 @@ macro_rules! hal {
     }
 }
 
-#[cfg(any(feature = "f301", feature = "f302", feature = "f303",))]
-hal!(ADC1, ADC1_2, adc1, 12);
-
-#[cfg(any(feature = "f302", feature = "f303",))]
-hal!(ADC2, ADC1_2, adc2, 12);
-
-#[cfg(any(feature = "f303"))]
-hal!(ADC3, ADC3_4, adc3, 34);
-
-#[cfg(any(feature = "f303"))]
-hal!(ADC4, ADC3_4, adc4, 34);
-
-#[cfg(any(feature = "l4"))]
-hal!(ADC1, ADC_COMMON, adc1, _);
-
-#[cfg(any(
-    feature = "l4x1",
-    feature = "l4x2",
-    feature = "l412",
-    feature = "l4x5",
-    feature = "l4x6",
-))]
-hal!(ADC2, ADC_COMMON, adc2, _);
-
-#[cfg(any(feature = "l4x5", feature = "l4x6",))]
-hal!(ADC3, ADC_COMMON, adc3, _);
-
-// todo: ADC 1 vs 2 on L5? L5 supports up to 2 ADCs, so I'm not sure what's going on here.
-#[cfg(any(feature = "l5"))]
-hal!(ADC, ADC_COMMON, adc1, _);
-
-// todo Implement ADC3 on H7. The issue is the enable / reset being on ahb4.
-cfg_if! {
-    if #[cfg(feature = "h7")] {
-        hal!(ADC1, ADC12_COMMON, adc1, 12);
-        hal!(ADC2, ADC12_COMMON, adc2, 12);
-        hal!(ADC3, ADC3_COMMON, adc3, 3);
-    }
-}
-
-cfg_if! {
-    if #[cfg(feature = "g4")] {
-        hal!(ADC1, ADC12_COMMON, adc1, 12);
-        hal!(ADC2, ADC12_COMMON, adc2, 12);
-    }
-}
-
-#[cfg(all(feature = "g4", not(any(feature = "g431", feature = "g441"))))]
-hal!(ADC3, ADC345_COMMON, adc3, 345);
-
-cfg_if! {
-    if #[cfg(any(feature = "g473", feature = "g474", feature = "g483", feature = "g484"))] {
-        hal!(ADC4, ADC345_COMMON, adc4, 345);
-        hal!(ADC5, ADC345_COMMON, adc5, 345);
-    }
-}
+hal!(ADC1, ADC12_COMMON, adc1, 12);
+hal!(ADC2, ADC12_COMMON, adc2, 12);
+hal!(ADC3, ADC3_COMMON, adc3, 3);
 
 // todo F4 as (depending on variant?) ADC 1, 2, 3

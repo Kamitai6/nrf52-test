@@ -2,78 +2,196 @@
 
 use core::{cell::UnsafeCell, ops::Deref, ptr};
 
-use super::*;
-use crate::{
-    check_errors,
-    pac::{self, RCC},
-    util::RccPeriph,
-    MAX_ITERS,
-};
+// Used for while loops, to allow returning an error instead of hanging.
+const MAX_ITERS: u32 = 300_000; // todo: What should this be?
+
+use crate::pac::{self, RCC};
+
+#[derive(Copy, Clone, Debug)]
+pub enum Error {
+    /// Overrun occurred
+    Overrun,
+    /// Mode fault occurred
+    ModeFault,
+    /// CRC error
+    Crc,
+    Hardware,
+    DuplexFailed, // todo temp?
+}
+
+#[derive(Clone, Copy, PartialEq)]
+/// Select the duplex communication mode between the 2 devices. Sets `CR1` register, `BIDIMODE`,
+/// and `RXONLY` fields.
+pub enum CommMode {
+    FullDuplex,
+    HalfDuplex,
+    /// Simplex Transmit only. (Cfg same as Full Duplex, but ignores input)
+    TransmitOnly,
+    /// Simplex Receive only.
+    ReceiveOnly,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+/// Used for managing NSS / CS pin. Sets CR1 register, SSM field.
+/// On H7, sets CFG2 register, `SSOE` field.
+pub enum SlaveSelect {
+    ///  In this configuration, slave select information
+    /// is driven internally by the SSI bit value in register SPIx_CR1. The external NSS pin is
+    /// free for other application uses.
+    Software,
+    /// This configuration is only used when the
+    /// MCU is set as master. The NSS pin is managed by the hardware. The NSS signal
+    /// is driven low as soon as the SPI is enabled in master mode (SPE=1), and is kept
+    /// low until the SPI is disabled (SPE =0). A pulse can be generated between
+    /// continuous communications if NSS pulse mode is activated (NSSP=1). The SPI
+    /// cannot work in multimaster configuration with this NSS setting.
+    HardwareOutEnable,
+    /// If the microcontroller is acting as the
+    /// master on the bus, this configuration allows multimaster capability. If the NSS pin
+    /// is pulled low in this mode, the SPI enters master mode fault state and the device is
+    /// automatically reconfigured in slave mode. In slave mode, the NSS pin works as a
+    /// standard “chip select” input and the slave is selected while NSS line is at low level.
+    HardwareOutDisable,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+/// Clock polarity. Sets CFGR2 register, CPOL field. Stored in the config as a field of `SpiMode`.
+pub enum Polarity {
+    /// Clock signal low when idle
+    IdleLow = 0,
+    /// Clock signal high when idle
+    IdleHigh = 1,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+/// Clock phase. Sets CFGR2 register, CPHA field. Stored in the config as a field of `SpiMode`.
+pub enum Phase {
+    /// Data in "captured" on the first clock transition
+    CaptureOnFirstTransition = 0,
+    /// Data in "captured" on the second clock transition
+    CaptureOnSecondTransition = 1,
+}
+
+#[derive(Clone, Copy)]
+/// SPI mode. Sets CFGR2 reigster, CPOL and CPHA fields.
+pub struct SpiMode {
+    /// Clock polarity
+    pub polarity: Polarity,
+    /// Clock phase
+    pub phase: Phase,
+}
+
+impl SpiMode {
+    /// Set Spi Mode 0: Idle low, capture on first transition.
+    /// Data sampled on rising edge and shifted out on the falling edge
+    pub fn mode0() -> Self {
+        Self {
+            polarity: Polarity::IdleLow,
+            phase: Phase::CaptureOnFirstTransition,
+        }
+    }
+
+    /// Set Spi Mode 1: Idle low, capture on second transition.
+    /// Data sampled on the falling edge and shifted out on the rising edge
+    pub fn mode1() -> Self {
+        Self {
+            polarity: Polarity::IdleLow,
+            phase: Phase::CaptureOnSecondTransition,
+        }
+    }
+
+    /// Set Spi Mode 2: Idle high, capture on first transition.
+    /// Data sampled on the rising edge and shifted out on the falling edge
+    pub fn mode2() -> Self {
+        Self {
+            polarity: Polarity::IdleHigh,
+            phase: Phase::CaptureOnFirstTransition,
+        }
+    }
+
+    /// Set Spi Mode 3: Idle high, capture on second transition.
+    /// Data sampled on the falling edge and shifted out on the rising edge
+    pub fn mode3() -> Self {
+        Self {
+            polarity: Polarity::IdleHigh,
+            phase: Phase::CaptureOnSecondTransition,
+        }
+    }
+}
+
+type SpiModeType = SpiMode;
+
+/// Set the factor to divide the APB clock by to set baud rate. Sets `SPI_CR1` register, `BR` field.
+/// On H7, sets CFG1 register, `MBR` field.
+#[derive(Copy, Clone)]
+#[repr(u8)]
+pub enum BaudRate {
+    Div2 = 0b000,
+    Div4 = 0b001,
+    Div8 = 0b010,
+    Div16 = 0b011,
+    Div32 = 0b100,
+    Div64 = 0b101,
+    Div128 = 0b110,
+    Div256 = 0b111,
+}
+
+#[derive(Copy, Clone)]
+pub enum Interrupt {
+    /// Additional number of transactions reload interrupt enable (TSERFIE)
+    NumberOfTransactionsReload,
+    ModeFault,
+    Tifre,
+    CrcError,
+    Overrun,
+    Underrun,
+    Txtfie,
+    /// EOT, SUSP, and TXC (EOTIE)
+    EotSuspTxc,
+    Dxp,
+    Txp,
+    Rxp,
+}
+
+#[derive(Clone)]
+/// Configuration data for SPI.
+pub struct SpiConfig {
+    /// SPI mode associated with Polarity and Phase. Defaults to Mode0: Idle low, capture on first transition.
+    pub mode: SpiModeType,
+    /// Sets the (duplex) communication mode between the devices. Defaults to full duplex.
+    pub comm_mode: SpiCommMode,
+    /// Controls use of hardware vs software CS/NSS pin. Defaults to software.
+    pub slave_select: SlaveSelect,
+    /// Data size. Defaults to 8 bits.
+    pub data_size: DataSize,
+    /// FIFO reception threshhold. Defaults to 8 bits.
+    pub fifo_reception_thresh: ReceptionThresh,
+    // pub cs_delay: f32,
+    // pub swap_miso_mosi: bool,
+    // pub suspend_when_inactive: bool,
+}
+
+impl Default for SpiConfig {
+    fn default() -> Self {
+        Self {
+            mode: SpiModeType::mode0(),
+            comm_mode: SpiCommMode::FullDuplex,
+            slave_select: SlaveSelect::Software,
+            data_size: DataSize::D8,
+            fifo_reception_thresh: ReceptionThresh::D8,
+        }
+    }
+}
 
 // Depth of FIFO to use. See RM0433 Rev 7, Table 409. Note that 16 is acceptable on this MCU,
 // for SPI 1-3
 const FIFO_LEN: usize = 8;
 
-/// Possible interrupt types. Enable these in SPIx_IER. Check with SR. Clear with IFCR
-#[derive(Copy, Clone)]
-pub enum SpiInterrupt {
-    /// Additional number of transactions reload interrupt enable (TSERFIE)
-    NumberOfTransactionsReload,
-    /// Mode fault (MODFIE)
-    ModeFault,
-    /// TIFRE (TIFREIE)
-    Tifre,
-    /// CRC error (CRCEIE)
-    CrcError,
-    /// Overrun (OVRIE)
-    Overrun,
-    /// Underrun (UNDRIE)
-    Underrun,
-    /// TXTFIE
-    Txtfie,
-    /// EOT, SUSP, and TXC (EOTIE)
-    EotSuspTxc,
-    /// DXP (TXPIE)
-    Dxp,
-    /// TXP (TXPIE)
-    Txp,
-    /// RXP (RXPIE)
-    Rxp,
-}
-
-/// Number of bits in at single SPI data frame. Sets `CFGR1` register, `DSIZE` field.
-#[derive(Copy, Clone)]
-#[repr(u8)]
-pub enum DataSize {
-    D4 = 3,
-    D5 = 4,
-    D6 = 5,
-    D7 = 6,
-    D8 = 7,
-    D9 = 8,
-    D10 = 9,
-    D11 = 10,
-    D12 = 11,
-    D13 = 12,
-    D14 = 13,
-    D15 = 14,
-    D16 = 15,
-    D17 = 16,
-    D18 = 17,
-    D19 = 18,
-    D20 = 19,
-    D21 = 20,
-    D22 = 21,
-    D23 = 22,
-    D24 = 23,
-    D25 = 24,
-    D26 = 25,
-    D27 = 26,
-    D28 = 27,
-    D29 = 28,
-    D30 = 29,
-    D31 = 30,
-    D32 = 31,
+pub struct Spi<R> {
+    pub regs: R,
+    pub cfg: SpiConfig,
 }
 
 impl<R> Spi<R>
@@ -544,5 +662,65 @@ where
             // SpiInterrupt::Rxp => w.rxpc().set_bit(),
             _ => w.eotc().set_bit(), // todo: PAC ommission?
         });
+    }
+
+    /// Stop a DMA transfer. Stops the channel, and disables the `txdmaen` and `rxdmaen` bits.
+    /// Run this after each transfer completes - you may wish to do this in an interrupt
+    /// (eg DMA transfer complete) instead of blocking. `channel2` is an optional second channel
+    /// to stop; eg if you have both a tx and rx channel.
+    pub fn stop_dma(
+        &mut self,
+        channel: DmaChannel,
+        channel2: Option<DmaChannel>,
+        dma_periph: dma::DmaPeriph,
+    ) {
+        // (RM:) To close communication it is mandatory to follow these steps in order:
+        // 1. Disable DMA streams for Tx and Rx in the DMA registers, if the streams are used.
+
+        dma::stop(dma_periph, channel);
+        if let Some(ch2) = channel2 {
+            dma::stop(dma_periph, ch2);
+        };
+
+        // 2. Disable the SPI by following the SPI disable procedure:
+        // self.disable();
+
+        // 3. Disable DMA Tx and Rx buffers by clearing the TXDMAEN and RXDMAEN bits in the
+        // SPI_CR2 register, if DMA Tx and/or DMA Rx are used.
+
+        #[cfg(not(feature = "h7"))]
+        self.regs.cr2.modify(|_, w| {
+            w.txdmaen().clear_bit();
+            w.rxdmaen().clear_bit()
+        });
+
+        #[cfg(feature = "h7")]
+        self.regs.cfg1.modify(|_, w| {
+            w.txdmaen().clear_bit();
+            w.rxdmaen().clear_bit()
+        });
+    }
+
+    /// Convenience function that clears the interrupt, and stops the transfer. For use with the TC
+    /// interrupt only.
+    pub fn cleanup_dma(
+        &mut self,
+        dma_periph: dma::DmaPeriph,
+        channel_tx: DmaChannel,
+        channel_rx: Option<DmaChannel>,
+    ) {
+        // The hardware seems to automatically enable Tx too; and we use it when transmitting.
+        dma::clear_interrupt(dma_periph, channel_tx, dma::DmaInterrupt::TransferComplete);
+
+        if let Some(ch_rx) = channel_rx {
+            dma::clear_interrupt(dma_periph, ch_rx, dma::DmaInterrupt::TransferComplete);
+        }
+
+        self.stop_dma(channel_tx, channel_rx, dma_periph);
+    }
+
+    /// Print the (raw) contents of the status register.
+    pub fn read_status(&self) -> u32 {
+        unsafe { self.regs.sr.read().bits() }
     }
 }
