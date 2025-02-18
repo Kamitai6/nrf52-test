@@ -86,7 +86,7 @@ fn main() -> ! {
     let mosi = gpioc.pc12.into_alternate();
     let mut nss = gpioa.pa15.into_push_pull_output();
 
-    let mut en_gate = gpioa.pa4.into_push_pull_output();
+    let mut en_gate = gpioa.pa4.into_push_pull_output(); //default low
     let mut led = gpiod.pd0.into_push_pull_output();
     let mut delay = cp.SYST.delay(ccdr.clocks);
 
@@ -94,38 +94,79 @@ fn main() -> ! {
     en_gate.set_high();
     // delay.delay_ms(100_u16);
 
-    let mut adc3 = adc::Adc::adc3(
-        dp.ADC3,
-        4.MHz(),
-        &mut delay,
-        ccdr.peripheral.ADC3,
+    // let mut adc3 = adc::Adc::adc3(
+    //     dp.ADC3,
+    //     4.MHz(),
+    //     &mut delay,
+    //     ccdr.peripheral.ADC3,
+    //     &ccdr.clocks,
+    // )
+    // .enable();
+    // adc3.set_resolution(adc::Resolution::SixteenBit); //16bit
+
+    // let mut control_timer = dp.TIM2.timer(10.Hz(), ccdr.peripheral.TIM2, &ccdr.clocks);
+
+    // let mut channel = gpioa.pa6.into_analog();
+    // let mut channel = gpioc.pc2.into_analog();
+
+    let mut spi: spi::Spi<_, _, u16> = dp.SPI3.spi(
+        (sck, miso, mosi),
+        spi::MODE_2,
+        500.kHz(),
+        ccdr.peripheral.SPI3,
+        &ccdr.clocks,
+    );
+    nss.set_high();
+    led.set_high();
+
+    // en_gate.set_high();
+    // delay.delay_ms(1000_u16);
+    // en_gate.set_high();
+    // delay.delay_ms(1000_u16);
+    // en_gate.set_high();
+    // delay.delay_ms(1000_u16);
+
+    let mut spi_buffer: [u16; 1] = [0];
+
+    // spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000]; // read fault 
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b1 << 15) | (0b0000001 << 8) | 0b00000000]; // read fault 
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b1 << 15) | (0b0000010 << 8) | 0b00000000]; // read fault 
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b1 << 15) | (0b0000011 << 8) | 0b00000000]; // read fault 
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b1 << 15) | (0b0000100 << 8) | 0b00000000]; //pre
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b0 << 15) | (0b0000100 << 8) | 0b10000000]; // write reset error
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    // spi_buffer = [(0b0 << 15) | (0b0001110 << 8) | 0b00000010]; // write reset error
+    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000];
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000100 << 8) | 0b00000000]; // ato
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000101 << 8) | 0b00000000];
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000110 << 8) | 0b00000000];
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b1 << 15) | (0b0000111 << 8) | 0b00000000];
+    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+
+    let t1builder = dp.TIM1.pwm_advanced(
+        (
+            gpioe.pe9.into_alternate(),
+            gpioe.pe11.into_alternate(),
+            gpioe.pe13.into_alternate(),
+        ),
+        ccdr.peripheral.TIM1,
         &ccdr.clocks,
     )
-    .enable();
-    adc3.set_resolution(adc::Resolution::SixteenBit); //16bit
-
-    let mut control_timer = dp.TIM2.timer(10.Hz(), ccdr.peripheral.TIM2, &ccdr.clocks);
-    
-    // let mut pwm = dp.TIM1.pwm(
-    //     gpioe.pe9.into_alternate(),
-    //     10.kHz(),
-    //     ccdr.peripheral.TIM1,
-    //     &ccdr.clocks,
-    // );
-    let t1builder = dp.TIM1.pwm_advanced(
-            (
-                gpioe.pe9.into_alternate(),
-                gpioe.pe11.into_alternate(),
-                gpioe.pe13.into_alternate(),
-            ),
-            ccdr.peripheral.TIM1,
-            &ccdr.clocks,
-        )
-        .frequency(10.kHz()) // max 200kHz
-        .with_deadtime(1.micros())
-        // .with_break_pin(gpioe.pe15.into_alternate(), Polarity::ActiveLow)
-        .center_aligned();
-        // .finalize();
+    .frequency(10.kHz()) // max 200kHz
+    .with_deadtime(1.micros())
+    // .with_break_pin(gpioe.pe15.into_alternate(), Polarity::ActiveLow)
+    .center_aligned();
+    // .finalize();
 
     let (mut t1control, (t1c1, t1c2, t1c3)) = t1builder.finalize();
     let mut t1c1 = t1c1
@@ -151,70 +192,19 @@ fn main() -> ! {
     t1c2.enable();
     t1c3.enable();
 
-    // let mut channel = gpioa.pa6.into_analog();
-    let mut channel = gpioc.pc2.into_analog();
+    // control_timer.listen(timer::Event::TimeOut);
 
-    let mut spi: spi::Spi<_, _, u16> = dp.SPI3.spi(
-        (sck, miso, mosi),
-        spi::MODE_2, // or MODE_1?
-        500.kHz(),
-        ccdr.peripheral.SPI3,
-        &ccdr.clocks,
-    );
-    nss.set_high();
-    led.set_high();
-
-    rprintln!("high daze: {}", en_gate.is_set_high() as u8);
-    rprintln!("low daze: {}", en_gate.is_set_low() as u8);
-
-    // en_gate.set_high();
-    // delay.delay_ms(1000_u16);
-
-    let mut spi_buffer: [u16; 1] = [0];
-
-    spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000]; // read fault 
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b1 << 15) | (0b0000001 << 8) | 0b00000000]; // read fault 
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b1 << 15) | (0b0000010 << 8) | 0b00000000]; // read fault 
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b1 << 15) | (0b0000011 << 8) | 0b00000000]; // read fault 
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b0 << 15) | (0b0000100 << 8) | 0b10000000]; // write reset error
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    // delay.delay_ms(100_u16);
-    spi_buffer = [(0b0 << 15) | (0b0001110 << 8) | 0b00000010]; // write reset error
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b1 << 15) | (0b0000000 << 8) | 0b00000000];
-    transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-
-    control_timer.listen(timer::Event::TimeOut);
-
-    let tim2_ptr = unsafe { &*pac::TIM2::ptr() };
-    rprintln!("dier: {:#010x}", tim2_ptr.dier.read().bits());
-    rprintln!("sr: {:#010x}", tim2_ptr.sr.read().bits());
-    rprintln!("arr: {:#010x}", tim2_ptr.arr.read().bits());
-
-    cortex_m::interrupt::free(|cs| {
-        TIMER.borrow(cs).replace(Some(control_timer));
-        PWM1.borrow(cs).replace(Some(t1c1));
-        PWM2.borrow(cs).replace(Some(t1c2));
-        PWM3.borrow(cs).replace(Some(t1c3));
-    });
+    // cortex_m::interrupt::free(|cs| {
+    //     TIMER.borrow(cs).replace(Some(control_timer));
+    //     PWM1.borrow(cs).replace(Some(t1c1));
+    //     PWM2.borrow(cs).replace(Some(t1c2));
+    //     PWM3.borrow(cs).replace(Some(t1c3));
+    // });
 
     // unsafe {
     //     // cp.NVIC.set_priority(pac::interrupt::TIM2, 0);
     //     pac::NVIC::unmask(pac::interrupt::TIM2);
     // }
-
-    rprintln!("iser0: {:#010x}", cp.NVIC.iser[0].read());
-    rprintln!("iser1: {:#010x}", cp.NVIC.iser[1].read());
-    rprintln!("iser2: {:#010x}", cp.NVIC.iser[2].read());
-    rprintln!("iser3: {:#010x}", cp.NVIC.iser[3].read());
-    rprintln!("iser4: {:#010x}", cp.NVIC.iser[4].read());
-    rprintln!("iser5: {:#010x}", cp.NVIC.iser[5].read());
-    rprintln!("iser6: {:#010x}", cp.NVIC.iser[6].read());
-    rprintln!("iser7: {:#010x}", cp.NVIC.iser[7].read());
 
     // let tim2_ptr = unsafe { &*pac::TIM2::ptr() };
     // rprintln!("cr1: {:#010x}", tim2_ptr.);
@@ -235,71 +225,71 @@ fn main() -> ! {
         //     data,
         //     data as f32 * (3.3 / adc3.slope() as f32)
         // );
-        let ctr = cortex_m::interrupt::free(|cs| {
-            let rc = TIMER.borrow(cs).borrow();
-            let timer = rc.as_ref().unwrap();
-            timer.counter() as u64
-        });
+        // let ctr = cortex_m::interrupt::free(|cs| {
+        //     let rc = TIMER.borrow(cs).borrow();
+        //     let timer = rc.as_ref().unwrap();
+        //     timer.counter() as u64
+        // });
         // rprintln!("count: {}", ctr);
         // rprintln!("phase: {}", PHASE.load(Ordering::Relaxed));
         // rprintln!("overflows: {}", OVERFLOWS.load(Ordering::SeqCst) as u64);
     }
 }
 
-#[interrupt]
-fn TIM2() {
-    // rprintln!("interrupt!!!");
-    OVERFLOWS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-    cortex_m::interrupt::free(|cs| {
-        let mut rc = TIMER.borrow(cs).borrow_mut();
-        let timer = rc.as_mut().unwrap();
-        timer.clear_irq();
+// #[interrupt]
+// fn TIM2() {
+//     // rprintln!("interrupt!!!");
+//     OVERFLOWS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+//     cortex_m::interrupt::free(|cs| {
+//         let mut rc = TIMER.borrow(cs).borrow_mut();
+//         let timer = rc.as_mut().unwrap();
+//         timer.clear_irq();
 
-        let mut rc = PWM1.borrow(cs).borrow_mut();
-        let pwm1 = rc.as_mut().unwrap();
+//         let mut rc = PWM1.borrow(cs).borrow_mut();
+//         let pwm1 = rc.as_mut().unwrap();
 
-        let mut rc = PWM2.borrow(cs).borrow_mut();
-        let pwm2 = rc.as_mut().unwrap();
+//         let mut rc = PWM2.borrow(cs).borrow_mut();
+//         let pwm2 = rc.as_mut().unwrap();
 
-        let mut rc = PWM3.borrow(cs).borrow_mut();
-        let pwm3 = rc.as_mut().unwrap();
+//         let mut rc = PWM3.borrow(cs).borrow_mut();
+//         let pwm3 = rc.as_mut().unwrap();
 
-        let period = pwm1.get_max_duty();
-        match PHASE.load(Ordering::Relaxed) {
-            0 => {
-                pwm1.set_duty(period / 4);  // A+
-                pwm2.set_duty(0);           // B-
-                pwm3.set_duty(period / 8);  // Cフロート
-            }
-            1 => {
-                pwm1.set_duty(period / 4);  // A+
-                pwm2.set_duty(period / 8);  // Bフロート
-                pwm3.set_duty(0);           // C-
-            }
-            2 => {
-                pwm1.set_duty(period / 8);  // Aフロート
-                pwm2.set_duty(period / 4);  // B+
-                pwm3.set_duty(0);           // C-
-            }
-            3 => {
-                pwm1.set_duty(0);           // A-
-                pwm2.set_duty(period / 4);  // B+
-                pwm3.set_duty(period / 8);  // Cフロート
-            }
-            4 => {
-                pwm1.set_duty(0);           // A-
-                pwm2.set_duty(period / 8);  // Bフロート
-                pwm3.set_duty(period / 4);  // C+
-            }
-            5 => {
-                pwm1.set_duty(period / 8);  // Aフロート
-                pwm2.set_duty(0);           // B-
-                pwm3.set_duty(period / 4);  // C+
-            }
-            _ => {}
-        }
-        let _ = PHASE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |phase| {
-            Some((phase + 1) % 6)
-        });
-    })
-}
+//         let period = pwm1.get_max_duty();
+//         match PHASE.load(Ordering::Relaxed) {
+//             0 => {
+//                 pwm1.set_duty(period / 4);  // A+
+//                 pwm2.set_duty(0);           // B-
+//                 pwm3.set_duty(period / 8);  // Cフロート
+//             }
+//             1 => {
+//                 pwm1.set_duty(period / 4);  // A+
+//                 pwm2.set_duty(period / 8);  // Bフロート
+//                 pwm3.set_duty(0);           // C-
+//             }
+//             2 => {
+//                 pwm1.set_duty(period / 8);  // Aフロート
+//                 pwm2.set_duty(period / 4);  // B+
+//                 pwm3.set_duty(0);           // C-
+//             }
+//             3 => {
+//                 pwm1.set_duty(0);           // A-
+//                 pwm2.set_duty(period / 4);  // B+
+//                 pwm3.set_duty(period / 8);  // Cフロート
+//             }
+//             4 => {
+//                 pwm1.set_duty(0);           // A-
+//                 pwm2.set_duty(period / 8);  // Bフロート
+//                 pwm3.set_duty(period / 4);  // C+
+//             }
+//             5 => {
+//                 pwm1.set_duty(period / 8);  // Aフロート
+//                 pwm2.set_duty(0);           // B-
+//                 pwm3.set_duty(period / 4);  // C+
+//             }
+//             _ => {}
+//         }
+//         let _ = PHASE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |phase| {
+//             Some((phase + 1) % 6)
+//         });
+//     })
+// }
