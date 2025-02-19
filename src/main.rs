@@ -113,7 +113,7 @@ fn main() -> ! {
 
     let mut spi: spi::Spi<_, _, u16> = dp.SPI3.spi(
         (sck, miso, mosi),
-        spi::MODE_2,
+        spi::MODE_1,
         5.MHz(),
         // 500.kHz(),
         ccdr.peripheral.SPI3,
@@ -137,6 +137,9 @@ fn main() -> ! {
     // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
     // spi_buffer = [0b00000100, 0b10000000]; // write reset error
     // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
+    spi_buffer = [(0b10001110 << 8) | 0b00000000]; //read ic11
+    transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
+    delay.delay_us(10_u16);
     spi_buffer = [(0b00001110 << 8) | 0b00000010]; // write ocp mode
     transfer_spi(false, &mut nss, &mut spi, &mut spi_buffer);
     delay.delay_us(10_u16);
