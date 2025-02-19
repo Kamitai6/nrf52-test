@@ -131,32 +131,29 @@ fn main() -> ! {
 
     let mut spi_buffer: [u16; 1] = [0; 1];
 
-    // spi_buffer = [0b00001101, 0b01100000]; // lock free
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    // spi_buffer = [0b10000100, 0b00000000]; //pre
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    // spi_buffer = [0b00000100, 0b10000000]; // write reset error
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b10001110 << 8) | 0b00000000]; //read ic11
+    spi_buffer = [(0b10000000 << 8) | 0b00000000]; //read fault
     transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
+    delay.delay_us(10_u16);
+    spi_buffer = [(0b00001101 << 8) | 0b01100000]; // write lock free
+    transfer_spi(false, &mut nss, &mut spi, &mut spi_buffer);
+    delay.delay_us(10_u16);
+    spi_buffer = [(0b00000100 << 8) | 0b10000000]; // write clear fault
+    transfer_spi(false, &mut nss, &mut spi, &mut spi_buffer);
     delay.delay_us(10_u16);
     spi_buffer = [(0b00001110 << 8) | 0b00000010]; // write ocp mode
     transfer_spi(false, &mut nss, &mut spi, &mut spi_buffer);
     delay.delay_us(10_u16);
-    // spi_buffer = [0b10000000, 0b00000000];
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    // spi_buffer = [0b1000100, 0b00000000]; // ato
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    // spi_buffer = [0b10000101, 0b00000000];
-    // transfer_spi(&mut nss, &mut spi, &mut spi_buffer);
-    spi_buffer = [(0b10001110 << 8) | 0b00000000]; //read ic11
+    // spi_buffer = [(0b10001110 << 8) | 0b00000000]; //read ic11
+    // transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
+    // delay.delay_us(10_u16);
+    spi_buffer = [(0b10000000 << 8) | 0b00000000]; //read fault
     transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
     delay.delay_us(10_u16);
-    spi_buffer = [(0b10000111 << 8) | 0b00000000];
+    spi_buffer = [(0b10000111 << 8) | 0b00000000]; //read communication check
     transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
     delay.delay_us(10_u16);
 
-    let t1builder = dp.TIM1.pwm_advanced(
+    let (mut t1control, (t1c1, t1c2, t1c3)) = dp.TIM1.pwm_advanced(
         (
             gpioe.pe9.into_alternate(),
             gpioe.pe11.into_alternate(),
@@ -168,19 +165,15 @@ fn main() -> ! {
     .frequency(10.kHz()) // max 200kHz
     .with_deadtime(1.micros())
     // .with_break_pin(gpioe.pe15.into_alternate(), Polarity::ActiveLow)
-    .center_aligned();
-    // .finalize();
+    .center_aligned()
+    .finalize();
 
-    let (mut t1control, (t1c1, t1c2, t1c3)) = t1builder.finalize();
     let mut t1c1 = t1c1
         .into_complementary(gpioe.pe8.into_alternate());
-        // .into_active_low();
     let mut t1c2 = t1c2
         .into_complementary(gpioe.pe10.into_alternate());
-        // .into_active_low();
     let mut t1c3 = t1c3
         .into_complementary(gpioe.pe12.into_alternate());
-        // .into_comp_active_low();
 
     print_type_of(&t1c1);
     print_type_of(&t1c2);
@@ -222,6 +215,10 @@ fn main() -> ! {
         //     led.set_low();
         // }
 
+        spi_buffer = [(0b10000000 << 8) | 0b00000000]; //read fault
+        transfer_spi(true, &mut nss, &mut spi, &mut spi_buffer);
+        delay.delay_us(10_u16);
+
         // let data: u32 = adc3.read(&mut channel).unwrap();
         //// voltage = reading * (vref/resolution)
         // rprintln!(
@@ -229,6 +226,7 @@ fn main() -> ! {
         //     data,
         //     data as f32 * (3.3 / adc3.slope() as f32)
         // );
+
         // let ctr = cortex_m::interrupt::free(|cs| {
         //     let rc = TIMER.borrow(cs).borrow();
         //     let timer = rc.as_ref().unwrap();
