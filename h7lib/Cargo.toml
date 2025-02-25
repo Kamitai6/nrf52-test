@@ -1,10 +1,14 @@
 [package]
 name = "h7lib"
 version = "0.0.1"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+exclude = [".gitignore"]
 
 [dependencies]
 cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
-stm32h7 = { version = "^0.15.1", optional = true }
+stm32h7 = { version = "^0.15.1" }
 
 smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"]}
 
@@ -12,11 +16,11 @@ smoltcp = { version = "0.12.0", default_features = false, features = ["medium-et
 h7rt = ["stm32h7/rt"]
 
 # [H7](https://docs.rs/crate/stm32h7/latest/source/Cargo.toml)
-h735 = ["stm32h7/stm32h735", "h7"]
-h743 = ["stm32h7/stm32h743", "h7"]
-h743v = ["stm32h7/stm32h743v", "h7"]
-h747cm4 = ["stm32h7/stm32h747cm4", "h7"]
-h747cm7 = ["stm32h7/stm32h747cm7", "h7"]
-h753 = ["stm32h7/stm32h753", "h7"]
-h753v = ["stm32h7/stm32h753v", "h7"]
-h7b3 = ["stm32h7/stm32h7b3", "h7"]
+h735 = ["stm32h7/stm32h735"]
+h743 = ["stm32h7/stm32h743"]
+h743v = ["stm32h7/stm32h743v"]
+h747cm4 = ["stm32h7/stm32h747cm4"]
+h747cm7 = ["stm32h7/stm32h747cm7"]
+h753 = ["stm32h7/stm32h753"]
+h753v = ["stm32h7/stm32h753v"]
+h7b3 = ["stm32h7/stm32h7b3"]

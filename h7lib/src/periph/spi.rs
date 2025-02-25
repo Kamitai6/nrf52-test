@@ -5,7 +5,7 @@ use core::{cell::UnsafeCell, ops::Deref, ptr};
 // Used for while loops, to allow returning an error instead of hanging.
 const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 
-use crate::pac::{self, RCC};
+use crate::pac;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
@@ -155,32 +155,44 @@ pub enum Interrupt {
     Rxp,
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+/// FIFO reception threshold Sets `SPI_CR2` register, `FRXTH` field.
+pub enum ReceptionThresh {
+    /// RXNE event is generated if the FIFO level is greater than or equal to 1/2 (16-bit)
+    D16 = 0,
+    /// RXNE event is generated if the FIFO level is greater than or equal to 1/4 (8-bit)
+    D8 = 1,
+}
+
 #[derive(Clone)]
 /// Configuration data for SPI.
 pub struct SpiConfig {
     /// SPI mode associated with Polarity and Phase. Defaults to Mode0: Idle low, capture on first transition.
     pub mode: SpiModeType,
     /// Sets the (duplex) communication mode between the devices. Defaults to full duplex.
-    pub comm_mode: SpiCommMode,
+    pub comm_mode: CommMode,
     /// Controls use of hardware vs software CS/NSS pin. Defaults to software.
     pub slave_select: SlaveSelect,
     /// Data size. Defaults to 8 bits.
-    pub data_size: DataSize,
+    pub data_size: u8,
     /// FIFO reception threshhold. Defaults to 8 bits.
     pub fifo_reception_thresh: ReceptionThresh,
     // pub cs_delay: f32,
     // pub swap_miso_mosi: bool,
     // pub suspend_when_inactive: bool,
+    pub band_rate: BaudRate,
 }
 
 impl Default for SpiConfig {
     fn default() -> Self {
         Self {
             mode: SpiModeType::mode0(),
-            comm_mode: SpiCommMode::FullDuplex,
+            comm_mode: CommMode::FullDuplex,
             slave_select: SlaveSelect::Software,
-            data_size: DataSize::D8,
+            data_size: 8,
             fifo_reception_thresh: ReceptionThresh::D8,
+            band_rate: BaudRate::Div128,
         }
     }
 }
@@ -189,20 +201,29 @@ impl Default for SpiConfig {
 // for SPI 1-3
 const FIFO_LEN: usize = 8;
 
-pub struct Spi<R> {
-    pub regs: R,
+pub struct Spi<const N: usize> {
+    periph_reg: *const pac::spi1::RegisterBlock,
     pub cfg: SpiConfig,
 }
 
-impl<R> Spi<R>
-where
-    R: Deref<Target = pac::spi1::RegisterBlock> + RccPeriph,
-{
+impl<const N: usize> Spi<N> {
     /// Initialize an SPI peripheral, including configuration register writes, and enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new(regs: R, cfg: SpiConfig, baud_rate: BaudRate) -> Self {
-        let rcc = unsafe { &(*RCC::ptr()) };
-        R::en_reset(rcc);
+    pub fn new(cfg: SpiConfig) -> Self {
+        let periph_reg: *const pac::spi1::RegisterBlock = match N {
+            1 => pac::SPI1::ptr(),
+            2 => pac::SPI2::ptr(),
+            3 => pac::SPI3::ptr(),
+            _ => panic!("Unsupported SPI number"),
+        };
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
+        let periph = unsafe { &(*periph_reg)};
+
+        // Enable clock for SPI
+        let _ = prec.enable(); // drop, can be recreated by free method
+
+        // Disable SS output
+        spi.cfg2.write(|w| w.ssoe().disabled());
 
         // H743 RM, section 50.4.8: Configuration of SPI.
         // 1. Write the proper GPIO registers: Configure GPIO for MOSI, MISO and SCK pins.
@@ -232,7 +253,7 @@ where
 
         regs.cfg1.modify(|_, w| {
             w.mbr().bits(baud_rate as u8);
-            w.dsize().bits(cfg.data_size as u8);
+            w.dsize().bits((cfg.data_size - 1) as u8);
             w.crcen().clear_bit()
         });
 
