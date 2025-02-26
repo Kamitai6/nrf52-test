@@ -1,19 +1,19 @@
 // Note: This module contains lots of C+P from stm32h7xx-hal.
 
-use core::{cell::UnsafeCell, ops::Deref, ptr};
+use core::{cell::UnsafeCell, ptr};
 
 // Used for while loops, to allow returning an error instead of hanging.
 const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 
 use crate::pac;
 
+use super::dma;
+use super::gpio::{GPIO, PinMode, Port};
+
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
-    /// Overrun occurred
     Overrun,
-    /// Mode fault occurred
     ModeFault,
-    /// CRC error
     Crc,
     Hardware,
     DuplexFailed, // todo temp?
@@ -25,9 +25,7 @@ pub enum Error {
 pub enum CommMode {
     FullDuplex,
     HalfDuplex,
-    /// Simplex Transmit only. (Cfg same as Full Duplex, but ignores input)
     TransmitOnly,
-    /// Simplex Receive only.
     ReceiveOnly,
 }
 
@@ -55,22 +53,16 @@ pub enum SlaveSelect {
 }
 
 #[derive(Clone, Copy)]
-#[repr(u8)]
 /// Clock polarity. Sets CFGR2 register, CPOL field. Stored in the config as a field of `SpiMode`.
 pub enum Polarity {
-    /// Clock signal low when idle
     IdleLow = 0,
-    /// Clock signal high when idle
     IdleHigh = 1,
 }
 
 #[derive(Clone, Copy)]
-#[repr(u8)]
 /// Clock phase. Sets CFGR2 register, CPHA field. Stored in the config as a field of `SpiMode`.
 pub enum Phase {
-    /// Data in "captured" on the first clock transition
     CaptureOnFirstTransition = 0,
-    /// Data in "captured" on the second clock transition
     CaptureOnSecondTransition = 1,
 }
 
@@ -202,28 +194,72 @@ impl Default for SpiConfig {
 const FIFO_LEN: usize = 8;
 
 pub struct Spi<const N: usize> {
-    periph_reg: *const pac::spi1::RegisterBlock,
+    regs_ptr: *const pac::spi1::RegisterBlock,
     pub cfg: SpiConfig,
 }
 
 impl<const N: usize> Spi<N> {
     /// Initialize an SPI peripheral, including configuration register writes, and enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new(cfg: SpiConfig) -> Self {
-        let periph_reg: *const pac::spi1::RegisterBlock = match N {
+    pub fn new(sck: GPIO, miso: GPIO, mosi: GPIO, cfg: SpiConfig) -> Self {
+        assert!(
+            matches!(sck.mode, PinMode::AltFn(5)) & 
+            matches!(sck.mode, PinMode::AltFn(5)) & 
+            matches!(sck.mode, PinMode::AltFn(5)), "Mode is not Analog");
+
+        match N {
+            1 => {
+                assert!(
+                    match sck.port {
+                        Port::A => (0..=7).contains(&gpio_pin.pin),
+                        Port::B => (0..=1).contains(&gpio_pin.pin),
+                        Port::C => (0..=5).contains(&gpio_pin.pin),
+                        Port::F => (11..=12).contains(&gpio_pin.pin),
+                        _ => false,
+                    },
+                    "Pin is not collect"
+                );
+            }
+            2 => {
+                assert!(
+                    match gpio_pin.port {
+                        Port::A => (2..=7).contains(&gpio_pin.pin),
+                        Port::B => (0..=1).contains(&gpio_pin.pin),
+                        Port::C => (0..=5).contains(&gpio_pin.pin),
+                        Port::F => (13..=14).contains(&gpio_pin.pin),
+                        _ => false,
+                    },
+                    "Pin is not collect"
+                );
+            }
+            3 => {
+                assert!(
+                    match gpio_pin.port {
+                        Port::C => (0..=2).contains(&gpio_pin.pin),
+                        Port::F => (3..=10).contains(&gpio_pin.pin),
+                        Port::H => (2..=5).contains(&gpio_pin.pin),
+                        _ => false,
+                    },
+                    "Pin is not collect"
+                );
+            }
+            _ => panic!("Unsupported ADC number")
+        }
+        
+        let regs_ptr: *const pac::spi1::RegisterBlock = match N {
             1 => pac::SPI1::ptr(),
             2 => pac::SPI2::ptr(),
             3 => pac::SPI3::ptr(),
             _ => panic!("Unsupported SPI number"),
         };
         let rcc = unsafe { &(*pac::RCC::ptr()) };
-        let periph = unsafe { &(*periph_reg)};
+        let periph = unsafe { &(*regs_ptr)};
 
         // Enable clock for SPI
         let _ = prec.enable(); // drop, can be recreated by free method
 
         // Disable SS output
-        spi.cfg2.write(|w| w.ssoe().disabled());
+        periph.cfg2.write(|w| w.ssoe().disabled());
 
         // H743 RM, section 50.4.8: Configuration of SPI.
         // 1. Write the proper GPIO registers: Configure GPIO for MOSI, MISO and SCK pins.
@@ -248,11 +284,11 @@ impl<const N: usize> Spi<N> {
         // [St forum thread on how to set up SPI in master mode avoiding mode faults:
         // https://community.st.com/s/question/0D50X0000AFrHS6SQN/stm32h7-what-is-the-proper-
         // way-to-make-spi-work-in-master-mode
-        regs.cr1
+        periph.cr1
             .modify(|_, w| w.ssi().bit(cfg.slave_select == SlaveSelect::Software));
 
-        regs.cfg1.modify(|_, w| {
-            w.mbr().bits(baud_rate as u8);
+            periph.cfg1.modify(|_, w| {
+            w.mbr().bits(cfg.baud_rate as u8);
             w.dsize().bits((cfg.data_size - 1) as u8);
             w.crcen().clear_bit()
         });
@@ -261,7 +297,7 @@ impl<const N: usize> Spi<N> {
         // consecutive data frames in master mode. In clock cycles; 0 - 15. (hardware CS)
         let inter_word_delay = 0;
 
-        regs.cfg2.modify(|_, w| {
+        periph.cfg2.modify(|_, w| {
             w.cpol().bit(cfg.mode.polarity as u8 != 0);
             w.cpha().bit(cfg.mode.phase as u8 != 0);
             w.master().set_bit();
@@ -275,7 +311,7 @@ impl<const N: usize> Spi<N> {
         // 3. Write to the SPI_CR2 register to select length of the transfer, if it is not known TSIZE
         // has to be programmed to zero.
         // Resetting this here; will be set to the appropriate value at each transaction.
-        regs.cr2.modify(|_, w| w.tsize().bits(0));
+        periph.cr2.modify(|_, w| w.tsize().bits(0));
 
         // 4. Write to SPI_CRCPOLY and into TCRCINI, RCRCINI and CRC33_17 bits at
         // SPI2S_CR1 register to configure the CRC polynomial and CRC calculation if needed.
@@ -286,20 +322,21 @@ impl<const N: usize> Spi<N> {
         // 6. Program the IOLOCK bit in the SPI_CFG1 register if the configuration protection is
         // required (for safety).
 
-        regs.cr1.modify(|_, w| w.spe().set_bit());
+        periph.cr1.modify(|_, w| w.spe().set_bit());
 
-        Self { regs, cfg }
+        Self { regs_ptr, cfg }
     }
 
     /// Change the SPI baud rate.
     pub fn reclock(&mut self, baud_rate: BaudRate) {
-        self.regs.cr1.modify(|_, w| w.spe().clear_bit());
+        let periph = unsafe { &(*self.regs_ptr)};
+        periph.cr1.modify(|_, w| w.spe().clear_bit());
 
-        self.regs
+        periph
             .cfg1
             .modify(|_, w| unsafe { w.mbr().bits(baud_rate as u8) });
 
-        self.regs.cr1.modify(|_, w| w.spe().set_bit());
+        periph.cr1.modify(|_, w| w.spe().set_bit());
     }
 
     /// L44 RM, section 40.4.9: "Procedure for disabling the SPI"
@@ -308,19 +345,20 @@ impl<const N: usize> Spi<N> {
     /// peripheral clock is stopped. Ongoing transactions can be corrupted in this case. In some
     /// modes the disable procedure is the only way to stop continuous communication running.
     pub fn disable(&mut self) {
+        let periph = unsafe { &(*self.regs_ptr)};
         // The correct disable procedure is (except when receive only mode is used):
         // 1. Wait until TXC=1 and/or EOT=1 (no more data to transmit and last data frame sent).
         // When CRC is used, it is sent automatically after the last data in the block is processed.
         // TXC/EOT is set when CRC frame is completed in this case. When a transmission is
         // suspended the software has to wait till CSTART bit is cleared.
-        while self.regs.sr.read().txc().bit_is_clear() {}
-        while self.regs.sr.read().eot().bit_is_clear() {}
+        while periph.sr.read().txc().bit_is_clear() {}
+        while periph.sr.read().eot().bit_is_clear() {}
         // 2. Read all RxFIFO data (until RXWNE=0 and RXPLVL=00)
-        while self.regs.sr.read().rxwne().bit_is_set() || self.regs.sr.read().rxplvl().bits() != 0 {
-            unsafe { ptr::read_volatile(&self.regs.rxdr as *const _ as *const u8) };
+        while periph.sr.read().rxwne().bit_is_set() || periph.sr.read().rxplvl().bits() != 0 {
+            unsafe { ptr::read_volatile(&periph.rxdr as *const _ as *const u8) };
         }
         // 3. Disable the SPI (SPE=0).
-        self.regs.cr1.modify(|_, w| w.spe().clear_bit());
+        periph.cr1.modify(|_, w| w.spe().clear_bit());
     }
 
     // todo: Temp C+P from h7xx hal while troubleshooting.
@@ -328,46 +366,48 @@ impl<const N: usize> Spi<N> {
     ///
     /// * Assumes the transaction has started (CSTART handled externally)
     /// * Assumes at least one word has already been written to the Tx FIFO
-    fn exchange(&mut self, word: u8) -> Result<u8, SpiError> {
-        let status = self.regs.sr.read();
+    fn exchange(&mut self, word: u8) -> Result<u8, Error> {
+        let periph = unsafe { &(*self.regs_ptr)};
+        let status = periph.sr.read();
         check_errors!(status);
 
         let mut i = 0;
-        while !self.regs.sr.read().dxp().is_available() {
+        while !periph.sr.read().dxp().is_available() {
             i += 1;
             if i >= MAX_ITERS {
-                return Err(SpiError::Hardware);
+                return Err(Error::Hardware);
             }
         }
 
         // NOTE(write_volatile/read_volatile) write/read only 1 word
         unsafe {
-            let txdr = &self.regs.txdr as *const _ as *const UnsafeCell<u8>;
+            let txdr = &periph.txdr as *const _ as *const UnsafeCell<u8>;
             ptr::write_volatile(UnsafeCell::raw_get(txdr), word);
-            return Ok(ptr::read_volatile(&self.regs.rxdr as *const _ as *const u8));
+            return Ok(ptr::read_volatile(&periph.rxdr as *const _ as *const u8));
         }
     }
     /// Read a single byte if available, or block until it's available.
     ///
     /// Assumes the transaction has started (CSTART handled externally)
     /// Assumes at least one word has already been written to the Tx FIFO
-    pub fn read(&mut self) -> Result<u8, SpiError> {
+    pub fn read(&mut self) -> Result<u8, Error> {
+        let periph = unsafe { &(*self.regs_ptr)};
         check_errors!(self.regs.sr.read());
 
         let mut i = 0;
-        while !self.regs.sr.read().rxp().is_not_empty() {
+        while !periph.sr.read().rxp().is_not_empty() {
             i += 1;
             if i >= MAX_ITERS {
-                return Err(SpiError::Hardware);
+                return Err(Error::Hardware);
             }
         }
 
         // NOTE(read_volatile) read only 1 word
-        return Ok(unsafe { ptr::read_volatile(&self.regs.rxdr as *const _ as *const u8) });
+        return Ok(unsafe { ptr::read_volatile(&periph.rxdr as *const _ as *const u8) });
     }
 
     /// Write multiple bytes on the SPI line, blocking until complete.
-    pub fn write(&mut self, write_words: &[u8]) -> Result<(), SpiError> {
+    pub fn write(&mut self, write_words: &[u8]) -> Result<(), Error> {
         // both buffers are the same length
         if write_words.is_empty() {
             return Ok(());
@@ -394,7 +434,7 @@ impl<const N: usize> Spi<N> {
     }
 
     /// Read multiple bytes to a buffer, blocking until complete.
-    pub fn transfer(&mut self, words: &mut [u8]) -> Result<(), SpiError> {
+    pub fn transfer(&mut self, words: &mut [u8]) -> Result<(), Error> {
         if words.is_empty() {
             return Ok(());
         }
@@ -420,17 +460,18 @@ impl<const N: usize> Spi<N> {
         Ok(())
     }
 
-    fn send(&mut self, word: u8) -> Result<(), SpiError> {
+    fn send(&mut self, word: u8) -> Result<(), Error> {
+        let periph = unsafe { &(*self.regs_ptr)};
         check_errors!(self.regs.sr.read());
 
         // NOTE(write_volatile) see note above
         unsafe {
-            let txdr = &self.regs.txdr as *const _ as *const UnsafeCell<u8>;
+            let txdr = &periph.txdr as *const _ as *const UnsafeCell<u8>;
             ptr::write_volatile(UnsafeCell::raw_get(txdr), word)
         }
         // write CSTART to start a transaction in
         // master mode
-        self.regs.cr1.modify(|_, w| w.cstart().started());
+        periph.cr1.modify(|_, w| w.cstart().started());
 
         return Ok(());
     }
@@ -443,18 +484,19 @@ impl<const N: usize> Spi<N> {
         channel_cfg: ChannelCfg,
         dma_periph: dma::DmaPeriph,
     ) {
+        let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
         let (ptr, len) = (buf.as_mut_ptr(), buf.len());
 
-        self.regs.cr1.modify(|_, w| w.spe().clear_bit());
-        self.regs.cfg1.modify(|_, w| w.rxdmaen().set_bit());
+        periph.cr1.modify(|_, w| w.spe().clear_bit());
+        periph.cfg1.modify(|_, w| w.rxdmaen().set_bit());
 
-        let periph_addr = &self.regs.rxdr as *const _ as u32;
+        let periph_addr = &periph.rxdr as *const _ as u32;
         let num_data = len as u32;
 
         match dma_periph {
             dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*DMA1::ptr()) };
+                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
                 dma::cfg_channel(
                     &mut regs,
                     channel,
@@ -484,8 +526,8 @@ impl<const N: usize> Spi<N> {
             }
         }
 
-        self.regs.cr1.modify(|_, w| w.spe().set_bit());
-        self.regs.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
+        periph.cr1.modify(|_, w| w.spe().set_bit());
+        periph.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
     }
 
     pub unsafe fn write_dma(
@@ -495,10 +537,11 @@ impl<const N: usize> Spi<N> {
         channel_cfg: ChannelCfg,
         dma_periph: dma::DmaPeriph,
     ) {
+        let periph = unsafe { &(*self.regs_ptr)};
         // Static write and read buffers?
         let (ptr, len) = (buf.as_ptr(), buf.len());
 
-        self.regs.cr1.modify(|_, w| w.spe().clear_bit());
+        periph.cr1.modify(|_, w| w.spe().clear_bit());
 
         // todo: Accept u16 words too.
 
@@ -515,12 +558,12 @@ impl<const N: usize> Spi<N> {
         // (N/A)
 
         // 2. Enable DMA streams for Tx and Rx in DMA registers, if the streams are used.
-        let periph_addr = &self.regs.txdr as *const _ as u32;
+        let periph_addr = &periph.txdr as *const _ as u32;
         let num_data = len as u32;
 
         match dma_periph {
             dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*DMA1::ptr()) };
+                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
                 dma::cfg_channel(
                     &mut regs,
                     channel,
@@ -550,11 +593,11 @@ impl<const N: usize> Spi<N> {
         }
 
         // 3. Enable DMA Tx buffer in the TXDMAEN bit in the SPI_CR2 register, if DMA Tx is used.
-        self.regs.cfg1.modify(|_, w| w.txdmaen().set_bit());
+        periph.cfg1.modify(|_, w| w.txdmaen().set_bit());
 
         // 4. Enable the SPI by setting the SPE bit.
-        self.regs.cr1.modify(|_, w| w.spe().set_bit());
-        self.regs.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
+        periph.cr1.modify(|_, w| w.spe().set_bit());
+        periph.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
     }
 
     /// Transfer data from DMA; this is the basic reading API, using both write and read transfers:
@@ -569,27 +612,28 @@ impl<const N: usize> Spi<N> {
         channel_cfg_read: ChannelCfg,
         dma_periph: dma::DmaPeriph,
     ) {
+        let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
         let (ptr_write, len_write) = (buf_write.as_ptr(), buf_write.len());
         let (ptr_read, len_read) = (buf_read.as_mut_ptr(), buf_read.len());
 
-        self.regs.cr1.modify(|_, w| w.spe().clear_bit());
+        periph.cr1.modify(|_, w| w.spe().clear_bit());
 
         // todo: DRY here, with `write_dma`, and `read_dma`.
 
-        let periph_addr_write = &self.regs.txdr as *const _ as u32;
-        let periph_addr_read = &self.regs.rxdr as *const _ as u32;
+        let periph_addr_write = &periph.txdr as *const _ as u32;
+        let periph_addr_read = &periph.rxdr as *const _ as u32;
 
         let num_data_write = len_write as u32;
         let num_data_read = len_read as u32;
 
         // Be careful - order of enabling Rx and Tx may matter, along with other things like when we
         // enable the channels, and the SPI periph.
-        self.regs.cfg1.modify(|_, w| w.rxdmaen().set_bit());
+        periph.cfg1.modify(|_, w| w.rxdmaen().set_bit());
 
         match dma_periph {
             dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*DMA1::ptr()) };
+                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
                 dma::cfg_channel(
                     &mut regs,
                     channel_write,
@@ -643,23 +687,24 @@ impl<const N: usize> Spi<N> {
             }
         }
 
-        self.regs.cfg1.modify(|_, w| w.txdmaen().set_bit());
+        periph.cfg1.modify(|_, w| w.txdmaen().set_bit());
 
-        self.regs.cr1.modify(|_, w| w.spe().set_bit());
-        self.regs.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
+        periph.cr1.modify(|_, w| w.spe().set_bit());
+        periph.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
     }
 
     /// Enable an interrupt.
-    pub fn enable_interrupt(&mut self, interrupt_type: SpiInterrupt) {
-        self.regs.ier.modify(|_, w| match interrupt_type {
-            SpiInterrupt::NumberOfTransactionsReload => w.tserfie().set_bit(),
-            SpiInterrupt::ModeFault => w.modfie().set_bit(),
-            SpiInterrupt::Tifre => w.tifreie().set_bit(),
-            SpiInterrupt::CrcError => w.crceie().set_bit(),
-            SpiInterrupt::Overrun => w.ovrie().set_bit(),
-            SpiInterrupt::Underrun => w.udrie().set_bit(),
-            SpiInterrupt::Txtfie => w.txtfie().set_bit(),
-            SpiInterrupt::EotSuspTxc => w.eotie().set_bit(),
+    pub fn enable_interrupt(&mut self, interrupt_type: Interrupt) {
+        let periph = unsafe { &(*self.regs_ptr)};
+        periph.ier.modify(|_, w| match interrupt_type {
+            Interrupt::NumberOfTransactionsReload => w.tserfie().set_bit(),
+            Interrupt::ModeFault => w.modfie().set_bit(),
+            Interrupt::Tifre => w.tifreie().set_bit(),
+            Interrupt::CrcError => w.crceie().set_bit(),
+            Interrupt::Overrun => w.ovrie().set_bit(),
+            Interrupt::Underrun => w.udrie().set_bit(),
+            Interrupt::Txtfie => w.txtfie().set_bit(),
+            Interrupt::EotSuspTxc => w.eotie().set_bit(),
             // SpiInterrupt::Dxp => w.dxpie().set_bit(),
             // SpiInterrupt::Txp => w.txpie().set_bit(),
             // SpiInterrupt::Rxp => w.rxpie().set_bit(),
@@ -668,16 +713,17 @@ impl<const N: usize> Spi<N> {
     }
 
     /// Clear an interrupt.
-    pub fn clear_interrupt(&mut self, interrupt_type: SpiInterrupt) {
-        self.regs.ifcr.write(|w| match interrupt_type {
-            SpiInterrupt::NumberOfTransactionsReload => w.tserfc().set_bit(),
-            SpiInterrupt::ModeFault => w.modfc().set_bit(),
-            SpiInterrupt::Tifre => w.tifrec().set_bit(),
-            SpiInterrupt::CrcError => w.crcec().set_bit(),
-            SpiInterrupt::Overrun => w.ovrc().set_bit(),
-            SpiInterrupt::Underrun => w.udrc().set_bit(),
-            SpiInterrupt::Txtfie => w.txtfc().set_bit(),
-            SpiInterrupt::EotSuspTxc => w.eotc().set_bit(),
+    pub fn clear_interrupt(&mut self, interrupt_type: Interrupt) {
+        let periph = unsafe { &(*self.regs_ptr)};
+        periph.ifcr.write(|w| match interrupt_type {
+            Interrupt::NumberOfTransactionsReload => w.tserfc().set_bit(),
+            Interrupt::ModeFault => w.modfc().set_bit(),
+            Interrupt::Tifre => w.tifrec().set_bit(),
+            Interrupt::CrcError => w.crcec().set_bit(),
+            Interrupt::Overrun => w.ovrc().set_bit(),
+            Interrupt::Underrun => w.udrc().set_bit(),
+            Interrupt::Txtfie => w.txtfc().set_bit(),
+            Interrupt::EotSuspTxc => w.eotc().set_bit(),
             // SpiInterrupt::Dxp => w.dxpc().set_bit(),
             // SpiInterrupt::Txp => w.txpc().set_bit(),
             // SpiInterrupt::Rxp => w.rxpc().set_bit(),
@@ -695,6 +741,7 @@ impl<const N: usize> Spi<N> {
         channel2: Option<DmaChannel>,
         dma_periph: dma::DmaPeriph,
     ) {
+        let periph = unsafe { &(*self.regs_ptr)};
         // (RM:) To close communication it is mandatory to follow these steps in order:
         // 1. Disable DMA streams for Tx and Rx in the DMA registers, if the streams are used.
 
@@ -708,15 +755,8 @@ impl<const N: usize> Spi<N> {
 
         // 3. Disable DMA Tx and Rx buffers by clearing the TXDMAEN and RXDMAEN bits in the
         // SPI_CR2 register, if DMA Tx and/or DMA Rx are used.
-
-        #[cfg(not(feature = "h7"))]
-        self.regs.cr2.modify(|_, w| {
-            w.txdmaen().clear_bit();
-            w.rxdmaen().clear_bit()
-        });
-
-        #[cfg(feature = "h7")]
-        self.regs.cfg1.modify(|_, w| {
+        
+        periph.cfg1.modify(|_, w| {
             w.txdmaen().clear_bit();
             w.rxdmaen().clear_bit()
         });
@@ -738,10 +778,5 @@ impl<const N: usize> Spi<N> {
         }
 
         self.stop_dma(channel_tx, channel_rx, dma_periph);
-    }
-
-    /// Print the (raw) contents of the status register.
-    pub fn read_status(&self) -> u32 {
-        unsafe { self.regs.sr.read().bits() }
     }
 }

@@ -15,14 +15,20 @@ pub enum Port {
     I = 8,
 }
 
+/// Values for `GPIOx_OTYPER`.
+pub enum OutputType {
+    PushPull  = 0,
+    OpenDrain = 1,
+}
+pub type OT = OutputType;
+
 /// Values for `GPIOx_MODER`. Sets pin to input, output, and other functionality.
 pub enum PinMode {
     Input,
-    Output(OutputType),
-    AltFn(u8, OutputType),
+    Output(OT),
+    AltFn(u8, OT),
     Analog,
 }
-
 impl PinMode {
     /// We use this function to find the value bits due to being unable to repr(u8) with
     /// the wrapped `AltFn` value.
@@ -34,12 +40,6 @@ impl PinMode {
             Self::Analog      => 3,
         }
     }
-}
-
-/// Values for `GPIOx_OTYPER`.
-pub enum OutputType {
-    PushPull  = 0,
-    OpenDrain = 1,
 }
 
 pub enum Speed {
@@ -60,12 +60,11 @@ pub enum PinState {
     High = 1,
 }
 
-/// The pulse edge used to trigger interrupts. Either rising, falling, or either.
+/// The pulse edge used to trigger interrupts.
 pub enum Edge {
     Rising  = 0,
     Falling = 1,
-    /// Interrupts trigger on either rising or falling pin edges.
-    Either  = 2,
+    Both  = 2,
 }
 
 #[derive(Clone)]
@@ -268,32 +267,16 @@ impl GPIO {
         exti.c1imr1.modify(|r, w| unsafe { w.bits(r.bits() | bitmask)});
 
         // --- 立ち上がりトリガの設定 ---
-        let mut rise_enable = false;
-        let mut fall_enable = false;
-        
-        match edge {
-            Edge::Rising => {
-                rise_enable = true;
-                fall_enable = false;
-            }
-            Edge::Falling => {
-                rise_enable = false;
-                fall_enable = true;
-            }
-            Edge::Either => {
-                rise_enable = true;
-                fall_enable = true;
-            }
-        }
+        let (rise_enable, fall_enable) = match edge {
+            Edge::Rising => (true, false),
+            Edge::Falling => (false, true),
+            Edge::Both => (true, true),
+        };
         exti.rtsr1.modify(|r, w| {
-            let current = r.bits();
-            let new = (current & !bitmask) | ((rise_enable as u32) * bitmask);
-            unsafe { w.bits(new) }
+            unsafe { w.bits((r.bits() & !bitmask) | ((rise_enable as u32) * bitmask)) }
         });
         exti.ftsr1.modify(|r, w| {
-            let current = r.bits();
-            let new = (current & !bitmask) | ((fall_enable as u32) * bitmask);
-            unsafe { w.bits(new) }
+            unsafe { w.bits((r.bits() & !bitmask) | ((fall_enable as u32) * bitmask)) }
         });
 
         // --- SYSCFG の EXTI 設定 ---
