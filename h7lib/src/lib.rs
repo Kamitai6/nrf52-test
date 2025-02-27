@@ -37,5 +37,27 @@ pub use stm32h7::stm32h753v as pac;
 #[cfg(feature = "h7b3")]
 pub use stm32h7::stm32h7b3 as pac;
 
+pub use fugit::{
+    HertzU32 as Hertz, KilohertzU32 as KiloHertz, MegahertzU32 as MegaHertz,
+    MicrosDurationU32 as MicroSeconds, MillisDurationU32 as MilliSeconds,
+    NanosDurationU32 as NanoSeconds,
+};
+
+/// Bits per second
+pub type Bps = Hertz;
+
+/// Extension trait that adds convenience methods to the `u32` type
+pub trait U32Ext {
+    /// Wrap in `Bps`
+    fn bps(self) -> Bps;
+}
+
+impl U32Ext for u32 {
+    fn bps(self) -> Bps {
+        Bps::from_raw(self)
+    }
+}
+
+
 pub mod other;
 pub mod periph;
