@@ -6,8 +6,8 @@
 use core::ptr;
 use cortex_m::{asm, delay::Delay};
 
-use super::dma::{self, ChannelCfg, DmaChannel};
-use super::gpio::{GPIO, PinMode, Port};
+use super::dma;
+use super::gpio;
 use crate::pac;
 
 // Address of the ADCinterval voltage reference. This address is found in the User manual. It appears
@@ -23,6 +23,7 @@ mod constants {
 }
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
 /// Select a trigger. Sets CFGR reg, EXTSEL field. See G4 RM, table 163: ADC1/2 - External
 /// triggers for regular channels.
 pub enum Trigger {
@@ -44,8 +45,53 @@ pub enum Trigger {
     Tim3Cc4   = 15,
     Tim7Trgo  = 30,
 }
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum Channel {
+    C1 = 1,
+    C2,
+    C3,
+    C4,
+    C5,
+    C6,
+    C7,
+    C8,
+    C9,
+    C10,
+    C11,
+    C12,
+    C13,
+    C14,
+    C15,
+    C16,
+    C17,
+    C18,
+    C19,
+}
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum Position {
+    P1 = 1,
+    P2,
+    P3,
+    P4,
+    P5,
+    P6,
+    P7,
+    P8,
+    P9,
+    P10,
+    P11,
+    P12,
+    P13,
+    P14,
+    P15,
+    P16,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
 /// Select a trigger. Sets CFGR reg, EXTEN field. See G4 RM, table 161:
 /// Configuring the trigger polarity for regular external triggers
 /// (Also applies for injected)
@@ -62,7 +108,7 @@ pub enum TriggerEdge {
 /// in the ISR register.
 pub enum AdcInterrupt {
     /// ADC ready (ADRDYIE field)
-    Ready,
+    Ready = 0,
     /// End of regular conversion interrupt enable (EOCIE field)
     EndOfConversion,
     /// End of regular sequence of conversions (EOSIE field)
@@ -96,7 +142,7 @@ pub enum AdcInterrupt {
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum SampleTime {
-    T1_5,
+    T1_5 = 0,
     T2_5,
     T4_5,
     T7_5,
@@ -116,6 +162,27 @@ impl Default for SampleTime {
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
+pub enum SequeLen {
+    S1 = 1,
+    S2,
+    S3,
+    S4,
+    S5,
+    S6,
+    S7,
+    S8,
+    S9,
+    S10,
+    S11,
+    S12,
+    S13,
+    S14,
+    S15,
+    S16,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
 /// Select single-ended, or differential inputs. Sets bits in the ADC[x]_DIFSEL register.
 pub enum InputType {
     SingleEnded = 0,
@@ -131,11 +198,40 @@ pub enum OperationMode {
     Continuous = 1,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
+/// ADC Clock mode
+/// (L44 RM, Section 16.4.3) The input clock is the same for the three ADCs and can be selected between two different
+/// clock sources (see Figure 40: ADC clock scheme):
+/// 1. The ADC clock can be a specific clock source. It can be derived from the following
+/// clock sources:
+/// – The system clock
+/// – PLLSAI1 (single ADC implementation)
+/// Refer to RCC Section for more information on how to generate ADC dedicated clock.
+/// To select this scheme, bits CKMODE[1:0] of the ADCx_CCR register must be reset.
+/// 2. The ADC clock can be derived from the AHB clock of the ADC bus interface, divided by
+/// a programmable factor (1, 2 or 4). In this mode, a programmable divider factor can be
+/// selected (/1, 2 or 4 according to bits CKMODE[1:0]).
+/// To select this scheme, bits CKMODE[1:0] of the ADCx_CCR register must be different
+/// from “00”.
+pub enum ClockMode {
+    /// Use Kernel Clock adc_ker_ck_input divided by PRESC. Asynchronous to AHB clock
+    Async = 0,
+    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant).
+    /// "For option 2), a prescaling factor of 1 (CKMODE[1:0]=01) can be used only if the AHB
+    /// prescaler is set to 1 (HPRE[3:0] = 0xxx in RCC_CFGR register)."
+    SyncDiv1 = 1,
+    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant) divided by 2
+    SyncDiv2 = 2,
+    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant) divided by 4
+    SyncDiv4 = 3,
+}
+
 /// Sets ADC clock prescaler; ADCx_CCR register, PRESC field.
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum Prescaler {
-    D1,
+    D1 = 1,
     D2,
     D4,
     D6,
@@ -211,7 +307,7 @@ impl Default for Align {
 #[derive(Clone)]
 pub struct Config {
     /// ADC clock mode. Defaults to AHB clock rcc_hclk3 (or hclk) divided by 2.
-    pub clock_mode: u8,
+    pub clock_mode: ClockMode,
     /// ADC sample time. See the `SampleTime` enum for details. Higher values
     ///  result in more accurate readings.
     pub sample_time: SampleTime,
@@ -242,7 +338,7 @@ impl Default for Config {
     }
 }
 
-pub struct Adc<const N: usize> {
+pub struct Adc<const N: u8> {
     pub cfg: Config,
     pub vdda_calibrated: f32,
 
@@ -250,48 +346,40 @@ pub struct Adc<const N: usize> {
     common_regs_ptr: *const pac::adc3_common::RegisterBlock,
 }
 
-impl<const N: usize> Adc<N> {
-    pub fn new(gpio_pin: GPIO, cfg: Config) -> Self {
-        assert!(matches!(gpio_pin.mode, PinMode::Analog), "Mode is not Analog");
+impl<const N: u8> Adc<N> {
+    const CHECK: () = {
+        assert!(1 <= N && N <= 3, "Adc must be 1 - 3.");
+    };
+    pub fn new<const PORT: char, const PIN: u8>(adc_pin: gpio::GPIO<PORT, PIN>, cfg: Config) -> Self {
+        let _ = Self::CHECK;
 
-        match N {
-            1 => {
-                assert!(
-                    match gpio_pin.port {
-                        Port::A => (0..=7).contains(&gpio_pin.pin),
-                        Port::B => (0..=1).contains(&gpio_pin.pin),
-                        Port::C => (0..=5).contains(&gpio_pin.pin),
-                        Port::F => (11..=12).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
+        assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
+
+        assert!(
+            match N {
+                1 => match PORT {
+                    'A' => 0 <= PIN && PIN <= 7,
+                    'B' => 0 <= PIN && PIN <= 1,
+                    'C' => 0 <= PIN && PIN <= 5,
+                    'F' => 11 <= PIN && PIN <= 12,
+                    _ => false,
+                },
+                2 => match PORT {
+                    'A' => 2 <= PIN && PIN <= 7,
+                    'B' => 0 <= PIN && PIN <= 1,
+                    'C' => 0 <= PIN && PIN <= 5,
+                    'F' => 13 <= PIN && PIN <= 14,
+                    _ => false,
+                },
+                3 => match PORT {
+                    'C' => 0 <= PIN && PIN <= 2,
+                    'F' => 3 <= PIN && PIN <= 10,
+                    'H' => 2 <= PIN && PIN <= 5,
+                    _ => false,
+                },
+                _ => false,
             }
-            2 => {
-                assert!(
-                    match gpio_pin.port {
-                        Port::A => (2..=7).contains(&gpio_pin.pin),
-                        Port::B => (0..=1).contains(&gpio_pin.pin),
-                        Port::C => (0..=5).contains(&gpio_pin.pin),
-                        Port::F => (13..=14).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
-            }
-            3 => {
-                assert!(
-                    match gpio_pin.port {
-                        Port::C => (0..=2).contains(&gpio_pin.pin),
-                        Port::F => (3..=10).contains(&gpio_pin.pin),
-                        Port::H => (2..=5).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
-            }
-            _ => panic!("Unsupported ADC number")
-        }
+        );
 
         let periph_regs_ptr: *const pac::adc3::RegisterBlock = match N {
             1 => pac::ADC1::ptr(),
@@ -354,11 +442,7 @@ impl<const N: usize> Adc<N> {
         myself
     }
 
-    pub fn set_sequence_len(&mut self, len: u8) {
-        if len - 1 >= 16 {
-            panic!("ADC sequence length must be in 1..=16")
-        }
-
+    pub fn set_sequence_len(&mut self, len: SequeLen) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         periph.sqr1.modify(|_, w| unsafe { w.l().bits(len - 1) });
     }
@@ -554,7 +638,7 @@ impl<const N: usize> Adc<N> {
         // channel.
     }
 
-    pub fn set_input_type(&mut self, channel: u8, input_type: InputType) {
+    pub fn set_input_type(&mut self, channel: Channel, input_type: InputType) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
 
         // L44 RM, 16.4.7:
@@ -583,7 +667,7 @@ impl<const N: usize> Adc<N> {
         }
     }
 
-    pub fn set_sequence(&mut self, chan: u8, position: u8) {
+    pub fn set_sequence(&mut self, chan: Channel, position: Position) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         match position {
             1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(chan) }),
@@ -601,14 +685,13 @@ impl<const N: usize> Adc<N> {
             13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(chan) }),
             14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(chan) }),
             15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(chan) }),
-            16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(chan) }),
-            _ => panic!("Sequence out of bounds. Only 16 positions are available, starting at 1."),
+            16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(chan) })
         }
 
         periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << chan)) });
     }
 
-    pub fn set_sample_time(&mut self, chan: u8, smp: SampleTime) {
+    pub fn set_sample_time(&mut self, chan: Channel, smp: SampleTime) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         
         // RM: Note: only allowed when ADSTART = 0 and JADSTART = 0.
@@ -751,7 +834,7 @@ impl<const N: usize> Adc<N> {
     /// Start a conversion: Either a single measurement, or continuous conversions.
     /// Blocks until the conversion is complete.
     /// See L4 RM 16.4.15 for details.
-    pub fn start_conversion(&mut self, sequence: &[u8]) {
+    pub fn start_conversion(&mut self, sequence: &[SequeLen]) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
 
         // todo: You should call this elsewhere, once, to prevent unneded reg writes.
@@ -784,13 +867,13 @@ impl<const N: usize> Adc<N> {
     }
 
     /// Take a single reading; return a raw integer value.
-    pub fn read(&mut self, channel: u8) -> u16 {
+    pub fn read(&mut self, channel: Channel) -> u16 {
         self.start_conversion(&[channel]);
         self.read_result()
     }
 
     /// Take a single reading; return a voltage.
-    pub fn read_voltage(&mut self, channel: u8) -> f32 {
+    pub fn read_voltage(&mut self, channel: Channel) -> f32 {
         let reading = self.read(channel);
         self.reading_to_voltage(reading)
     }
@@ -800,8 +883,8 @@ impl<const N: usize> Adc<N> {
     pub fn set_trigger(&mut self, trigger: Trigger, edge: TriggerEdge) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         periph.cfgr.modify(|_, w| unsafe {
-            w.exten().bits(edge as u8);
-            w.extsel().bits(trigger as u8)
+            w.exten().bits(edge);
+            w.extsel().bits(trigger)
         });
     }
 
@@ -811,9 +894,9 @@ impl<const N: usize> Adc<N> {
     pub unsafe fn read_dma(
         &mut self, buf: &mut [u16],
         adc_channels: &[u8],
-        dma_channel: DmaChannel,
-        channel_cfg: ChannelCfg,
-        dma_periph: dma::DmaPeriph,
+        dma_channel: dma::DmaChannel,
+        channel_cfg: dma::ChannelCfg,
+        dma_periph: &dma::Dma<1>,
     ) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         let (ptr, len) = (buf.as_mut_ptr(), buf.len());
@@ -874,36 +957,16 @@ impl<const N: usize> Adc<N> {
 
         let num_data = len as u32;
 
-        match dma_periph {
-            dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    dma_channel,
-                    &periph.dr as *const _ as u32,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S16,
-                    dma::DataSize::S16,
-                    channel_cfg,
-                );
-            }
-            dma::DmaPeriph::Dma2 => {
-                let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    dma_channel,
-                    &periph.dr as *const _ as u32,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S16,
-                    dma::DataSize::S16,
-                    channel_cfg,
-                );
-            }
-        }
+        dma_periph.cfg_channel(
+            dma_channel,
+            &periph.dr as *const _ as u32,
+            ptr as u32,
+            num_data,
+            dma::Direction::ReadFromPeriph,
+            dma::DataSize::S16,
+            dma::DataSize::S16,
+            channel_cfg,
+        );
     }
 
     /// Enable a specific type of ADC interrupt.

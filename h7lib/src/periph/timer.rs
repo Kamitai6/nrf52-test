@@ -1,43 +1,35 @@
 //! Timers
-//!
-//! # Examples
-//!
-//! - [Blinky using a Timer](https://github.com/stm32-rs/stm32h7xx-hal/blob/master/examples/blinky_timer.rs)
-//! - [64 bit microsecond timer](https://github.com/stm32-rs/stm32h7xx-hal/blob/master/examples/tick_timer.rs)
-
-// TODO: on the h7x3 at least, only TIM2, TIM3, TIM4, TIM5 can support 32 bits.
-// TIM1 is 16 bit.
-
-use core::marker::PhantomData;
 
 // use crate::stm32::rcc::{d2ccip2r as ccip2r, d3ccipr as srdccipr};
 
-use crate::pac;
-use super::rcc::{rec, CoreClocks, ResetEnable};
-
-/// Timer Events
-///
-/// Each event is a possible interrupt source, if enabled
-pub enum Event {
-    /// Timer timed out / count down ended
-    TimeOut,
-}
+use crate::{pac, Hertz};
 
 pub enum CntType {
     U16,
     U32,
 }
 
+pub enum TimerType {
+    INT,
+    LOOP
+}
+
 /// Hardware timers
 #[derive(Debug)]
 pub struct Timer<const N: u8> {
+    pub tim_type: TimerType,
     cnt_type: CntType,
-    clk: u32,
+    clock: u32,
     regs_ptr: *const pac::tim1::RegisterBlock,
 }
 
 impl<const N: u8> Timer<N> {
-    fn new(frequency or timeout) -> ! {
+    const CHECK: () = {
+        assert!(1 <= N && N <= 17, "Timer must be 1 - 17.");
+    };
+    pub fn new(tim_type: TimerType) -> ! {
+        let _ = Self::CHECK;
+
         let cnt_type = match N {
             2|5 => CntType::U32,
             _ => CntType::U16,
@@ -58,51 +50,45 @@ impl<const N: u8> Timer<N> {
             15 => pac::TIM15::ptr(),
             16 => pac::TIM16::ptr(),
             17 => pac::TIM17::ptr(),
-            _ => panic!("Unsupported TIM number"),
         };
 
         // enable and reset peripheral to a clean state
-        let _ = prec.enable().reset(); // drop, can be recreated by free method
+        // let _ = prec.enable().reset(); // drop, can be recreated by free method
 
         // let clk = (*regs_ptr)::get_clk(clocks)
         // clocks.$ckX()
 
         let myself = Self {
+            tim_type,
             cnt_type,
-            clk,
+            clock,
             regs_ptr,
         };
     }
 
-    fn start() {
-        let mut timer = Timer::$timX(self, prec, clocks);
-
-        timer.pause();
+    pub fn start(self) {
+        self.pause();
 
         // UEV event occours on next overflow
-        timer.urs_counter_only();
-        timer.clear_irq();
+        self.urs_counter_only();
+        self.clear_irq();
         
-        match {
-            // Set PSC and ARR
-            timer.set_tick_freq(frequency);
-            // Set PSC and ARR
-            self.set_freq(timeout.into());
+        match self.tim_type {
+            TimerType::LOOP => self.set_stopwatch_frequency(frequency),
+            TimerType::INT => self.set_timeout_interval(timeout),
         }
         // Generate an update event to force an update of the ARR
         // register. This ensures the first timer cycle is of the
         // specified duration.
-        timer.apply_freq();
+        self.apply_freq();
 
         // Start counter
-        timer.resume();
-
-        timer
+        self.resume();
     }
 
-    fn wait(&mut self) -> nb::Result<(), Void> {
+    fn wait(&mut self) -> Result<(), ()> {
         if self.is_irq_clear() {
-            Err(nb::Error::WouldBlock)
+            Err(())
         } else {
             self.clear_irq();
             Ok(())
@@ -111,8 +97,8 @@ impl<const N: u8> Timer<N> {
 
     /// Configures the timer's frequency and counter reload value
     /// so that it underflows at the timeout's frequency
-    pub fn set_freq(&mut self, timeout: Hertz) {
-        let ticks = self.clk / timeout.raw();
+    pub fn set_timeout_interval(&mut self, timeout: Hertz) {
+        let ticks = self.clock / timeout.raw();
 
         self.set_timeout_ticks(ticks);
     }
@@ -143,7 +129,7 @@ impl<const N: u8> Timer<N> {
         const NANOS_PER_SECOND: u64 = 1_000_000_000;
         let timeout = timeout.into();
 
-        let clk = self.clk as u64;
+        let clk = self.clock as u64;
         let ticks = u32::try_from(
             clk * timeout.as_secs() +
             clk * u64::from(timeout.subsec_nanos()) / NANOS_PER_SECOND,
@@ -167,10 +153,11 @@ impl<const N: u8> Timer<N> {
     /// timer.set_timeout_ticks(100001);
     /// ```
     fn set_timeout_ticks(&mut self, ticks: u32) {
+        let regs = unsafe {&(*self.regs_ptr)};
         let (psc, arr) = calculate_timeout_ticks_register_values(ticks);
-        self.tim.psc.write(|w| w.psc().bits(psc));
+        regs.psc.write(|w| w.psc().bits(psc));
         #[allow(unused_unsafe)] // method is safe for some timers
-        self.tim.arr.write(|w| unsafe { w.bits(u32(arr)) });
+        regs.arr.write(|w| unsafe { w.bits(u32(arr)) });
     }
 
     /// Configures the timer to count up at the given frequency
@@ -178,15 +165,16 @@ impl<const N: u8> Timer<N> {
     /// Counts from 0 to the counter's maximum value, then repeats.
     /// Because this only uses the timer prescaler, the frequency
     /// is rounded to a multiple of the timer's kernel clock.
-    pub fn set_tick_freq(&mut self, frequency: Hertz) {
-        let div = self.clk / frequency.raw();
+    pub fn set_stopwatch_frequency(&mut self, frequency: Hertz) {
+        let regs = unsafe {&(*self.regs_ptr)};
+        let div = self.clock / frequency.raw();
 
-        let psc = u16(div - 1).unwrap();
-        self.tim.psc.write(|w| w.psc().bits(psc));
+        let psc = u16(div - 1);
+        regs.psc.write(|w| w.psc().bits(psc));
 
         let counter_max = u32(<$cntType>::MAX);
         #[allow(unused_unsafe)] // method is safe for some timers
-        self.tim.arr.write(|w| unsafe { w.bits(counter_max) });
+        regs.arr.write(|w| unsafe { w.bits(counter_max) });
     }
 
     /// Applies frequency/timeout changes immediately
@@ -195,36 +183,43 @@ impl<const N: u8> Timer<N> {
     /// value when its counter overflows. This function causes
     /// those changes to happen immediately. Also clears the counter.
     pub fn apply_freq(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.egr.write(|w| w.ug().set_bit());
     }
 
     /// Pauses the TIM peripheral
     pub fn pause(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.cr1.modify(|_, w| w.cen().clear_bit());
     }
 
     /// Resume (unpause) the TIM peripheral
     pub fn resume(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.cr1.modify(|_, w| w.cen().set_bit());
     }
 
     /// Set Update Request Source to counter overflow/underflow only
     pub fn urs_counter_only(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.cr1.modify(|_, w| w.urs().counter_only());
     }
 
     /// Reset the counter of the TIM peripheral
     pub fn reset_counter(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.cnt.reset();
     }
 
     /// Read the counter of the TIM peripheral
     pub fn counter(&self) -> u32 {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.cnt.read().cnt().bits().into()
     }
 
     /// Start listening for `event`
     pub fn listen(&mut self, event: Event) {
+        let regs = unsafe {&(*self.regs_ptr)};
         match event {
             Event::TimeOut => {
                 // Enable update event interrupt
@@ -235,6 +230,7 @@ impl<const N: u8> Timer<N> {
 
     /// Stop listening for `event`
     pub fn unlisten(&mut self, event: Event) {
+        let regs = unsafe {&(*self.regs_ptr)};
         match event {
             Event::TimeOut => {
                 // Disable update event interrupt
@@ -247,11 +243,13 @@ impl<const N: u8> Timer<N> {
 
     /// Check if Update Interrupt flag is cleared
     pub fn is_irq_clear(&mut self) -> bool {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.sr.read().uif().bit_is_clear()
     }
 
     /// Clears interrupt flag
     pub fn clear_irq(&mut self) {
+        let regs = unsafe {&(*self.regs_ptr)};
         self.tim.sr.modify(|_, w| {
             // Clears timeout event
             w.uif().clear_bit()
@@ -261,21 +259,11 @@ impl<const N: u8> Timer<N> {
     }
 
     /// Releases the TIM peripheral
-    pub fn free(mut self) -> ($TIMX, rec::$Rec) {
+    pub fn free(mut self) -> Self {
         // pause counter
         self.pause();
 
-        (self.tim, rec::$Rec { _marker: PhantomData })
-    }
-
-    /// Returns a reference to the inner peripheral
-    pub fn inner(&self) -> &$TIMX {
-        &self.tim
-    }
-
-    /// Returns a mutable reference to the inner peripheral
-    pub fn inner_mut(&mut self) -> &mut $TIMX {
-        &mut self.tim
+        self
     }
 }
 

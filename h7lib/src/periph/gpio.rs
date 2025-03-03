@@ -1,20 +1,7 @@
 use crate::pac;
 
-#[derive(Copy, Clone, PartialEq)]
-/// GPIO port letter
-pub enum Port {
-    A = 0,
-    B = 1,
-    C = 2,
-    D = 3,
-    E = 4,
-    F = 5,
-    G = 6,
-    H = 7,
-    #[cfg(any(feature = "h747cm4", feature = "h747cm7",))]
-    I = 8,
-}
-
+#[derive(Clone, Copy)]
+#[repr(u8)]
 /// Values for `GPIOx_OTYPER`.
 pub enum OutputType {
     PushPull  = 0,
@@ -22,6 +9,8 @@ pub enum OutputType {
 }
 pub type OT = OutputType;
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
 /// Values for `GPIOx_MODER`. Sets pin to input, output, and other functionality.
 pub enum PinMode {
     Input,
@@ -42,6 +31,8 @@ impl PinMode {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum Speed {
     Low      = 0, 
     Medium   = 1,
@@ -49,17 +40,23 @@ pub enum Speed {
     VeryHigh = 3, // Called "High" on some families.
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum Pull {
     Floating = 0,
     Up       = 1,
     Down     = 2,
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum PinState {
     Low  = 0,
     High = 1,
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
 /// The pulse edge used to trigger interrupts.
 pub enum Edge {
     Rising  = 0,
@@ -69,35 +66,32 @@ pub enum Edge {
 
 #[derive(Clone)]
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
-pub struct GPIO {
-    /// The GPIO Port letter. Eg A, B, C.
-    pub port: Port,
-    /// The pin number: 1 - 15.
-    pub pin: u8,
-
+pub(super) struct GPIO<const PORT: char, const PIN: u8> {
     pub mode: PinMode,
 
     regs_ptr: *const pac::gpioa::RegisterBlock,
 }
 
-impl GPIO {
+impl<const PORT: char, const PIN: u8> GPIO<PORT, PIN> {
+    const CHECK: () = {
+        assert!(PIN <= 15, "Pin must be 0 - 15.");
+    };
     /// Create a new pin, with a specific mode. Enables the RCC peripheral clock to the port,
     /// if not already enabled. Example: `let pa1 = Pin::new(Port::A, 1, PinMode::Output);` Leaves settings
     /// other than mode and alternate function (if applicable) at their hardware defaults.
-    pub fn new(port: Port, pin: u8, mode: PinMode) -> Self {
-        assert!(pin <= 15, "Pin must be 0 - 15.");
-
-        let regs_ptr = match port {
-            Port::A => crate::pac::GPIOA::ptr(),
-            Port::B => crate::pac::GPIOB::ptr() as _,
-            Port::C => crate::pac::GPIOC::ptr() as _,
-            Port::D => crate::pac::GPIOD::ptr() as _,
-            Port::E => crate::pac::GPIOE::ptr() as _,
-            Port::F => crate::pac::GPIOF::ptr() as _,
-            Port::G => crate::pac::GPIOG::ptr() as _,
-            Port::H => crate::pac::GPIOH::ptr() as _,
+    pub fn new(mode: PinMode) -> Self {
+        let _ = Self::CHECK;
+        let regs_ptr = match PORT {
+            "A" => crate::pac::GPIOA::ptr(),
+            "B" => crate::pac::GPIOB::ptr() as _,
+            "C" => crate::pac::GPIOC::ptr() as _,
+            "D" => crate::pac::GPIOD::ptr() as _,
+            "E" => crate::pac::GPIOE::ptr() as _,
+            "F" => crate::pac::GPIOF::ptr() as _,
+            "G" => crate::pac::GPIOG::ptr() as _,
+            "H" => crate::pac::GPIOH::ptr() as _,
             #[cfg(any(feature = "h747cm4", feature = "h747cm7",))]
-            Port::I => crate::pac::GPIOI::ptr() as _,
+            "I" => crate::pac::GPIOI::ptr() as _,
         };
 
         let regs = unsafe { &(*regs_ptr) };
@@ -105,31 +99,31 @@ impl GPIO {
 
         unsafe {
             rcc.ahb4enr.modify(|r, w| {
-                w.bits(r.bits() | 1 << port)
+                w.bits(r.bits() | 1 << PORT)
             });
 
             rcc.ahb4rstr.modify(|r, w| {
-                w.bits(r.bits() | 1 << port)
+                w.bits(r.bits() | 1 << PORT)
             });
 
             rcc.ahb4rstr.modify(|r, w| {
-                w.bits(r.bits() & !(1 << port))
+                w.bits(r.bits() & !(1 << PORT))
             });
         }
 
         match mode {
             PinMode::Output(outtype) => {
                 regs.otyper.modify(|r, w| unsafe {
-                    w.bits(r.bits() & !(0b1 << pin) | (outtype << pin))
+                    w.bits(r.bits() & !(0b1 << PIN) | (outtype << PIN))
                 });
             }
             PinMode::AltFn(af, outtype) => {
                 regs.otyper.modify(|r, w| unsafe {
-                    w.bits(r.bits() & !(0b1 << pin) | (outtype << pin))
+                    w.bits(r.bits() & !(0b1 << PIN) | (outtype << PIN))
                 });
 
-                if pin < 8 {
-                    let offset = 4 * pin;
+                if PIN < 8 {
+                    let offset = 4 * PIN;
                     regs.afrl.modify(|r, w| unsafe {
                         w.bits(
                             (r.bits() & !(0b1111 << offset))
@@ -137,7 +131,7 @@ impl GPIO {
                         )
                     });
                 } else {
-                    let offset = 4 * (pin - 8);
+                    let offset = 4 * (PIN - 8);
                     regs.afrh.modify(|r, w| unsafe {
                         w.bits(
                             (r.bits() & !(0b1111 << offset))
@@ -149,7 +143,7 @@ impl GPIO {
             _ => {}
         }
 
-        let offset = 2 * pin;
+        let offset = 2 * PIN;
         regs.moder.modify(|r, w| unsafe {
             w.bits(
                 (r.bits() & !(0b11 << offset)) | (mode.val() << offset),
@@ -157,8 +151,6 @@ impl GPIO {
         });
 
         Self {
-            port,
-            pin,
             mode,
             regs_ptr,
         }
@@ -168,7 +160,7 @@ impl GPIO {
     /// Set output speed to Low, Medium, or High. Sets the `OSPEEDR` register.
     pub fn set_speed(&mut self, speed: Speed) {
         let regs = unsafe { &(*self.regs_ptr) };
-        let offset = 2 * self.pin;
+        let offset = 2 * PIN;
 
         unsafe {
             regs.ospeedr.modify(|r, w| {
@@ -183,7 +175,7 @@ impl GPIO {
     /// Set internal pull resistor: Pull up, pull down, or floating. Sets the `PUPDR` register.
     pub fn set_pull(&mut self, pull: Pull) {
         let regs = unsafe { &(*self.regs_ptr) };
-        let offset = 2 * self.pin;
+        let offset = 2 * PIN;
         unsafe {
             regs.pupdr.modify(|r, w| {
                 w.bits((r.bits() & !(0b11 << offset)) | (pull << offset))
@@ -212,14 +204,14 @@ impl GPIO {
             PinState::High => 0,
         };
 
-        regs.bsrr.write(|w| unsafe { w.bits(1 << (offset + self.pin))});
+        regs.bsrr.write(|w| unsafe { w.bits(1 << (offset + PIN))});
     }
 
     #[inline(always)]
     /// Check if the pin's input voltage is high. Reads from the `IDR` register.
     pub fn is_high(&self) -> bool {
         let regs: &pac::gpioa::RegisterBlock = unsafe { &(*self.regs_ptr) };
-        regs.idr.read().bits() & (1 << self.pin) != 0
+        regs.idr.read().bits() & (1 << PIN) != 0
     }
 
     #[inline(always)]
@@ -257,7 +249,7 @@ impl GPIO {
         let syscfg = unsafe { &(*pac::SYSCFG::ptr()) };
     
         // ピンに対応するビットマスク
-        let bitmask = 1 << self.pin;
+        let bitmask = 1 << PIN;
     
         // --- IMR の設定 ---
         // 特定のコア向けの割り込みマスクをビット演算でセットする
@@ -283,30 +275,40 @@ impl GPIO {
         // EXTI の設定はピン番号で使用するレジスタが変わるので、
         // ピン番号 0-3: exticr1, 4-7: exticr2, 8-11: exticr3, 12-15: exticr4
         // また各レジスタ内は 4 ビットごとにピン設定があるので、シフト量は (pin % 4) * 4
-        let offset = (self.pin % 4) * 4;
+        let offset = (PIN % 4) * 4;
 
-        match self.pin {
+        match PIN {
             0..=3 => {
                 syscfg.exticr1.modify(|r, w| unsafe {
-                    w.bits((r.bits() & !(0xf << offset)) | (self.port << offset))
+                    w.bits((r.bits() & !(0xf << offset)) | (PORT << offset))
                 });
             }
             4..=7 => {
                 syscfg.exticr2.modify(|r, w| unsafe {
-                    w.bits((r.bits() & !(0xf << offset)) | (self.port << offset))
+                    w.bits((r.bits() & !(0xf << offset)) | (PORT << offset))
                 });
             }
             8..=11 => {
                 syscfg.exticr3.modify(|r, w| unsafe {
-                    w.bits((r.bits() & !(0xf << offset)) | (self.port << offset))
+                    w.bits((r.bits() & !(0xf << offset)) | (PORT << offset))
                 });
             }
             12..=15 => {
                 syscfg.exticr4.modify(|r, w| unsafe {
-                    w.bits((r.bits() & !(0xf << offset)) | (self.port << offset))
+                    w.bits((r.bits() & !(0xf << offset)) | (PORT << offset))
                 });
             }
-            _ => unreachable!(),
         }
     }
 }
+
+pub type PA<const PIN: u8> = GPIO<"A", PIN>;
+pub type PB<const PIN: u8> = GPIO<"B", PIN>;
+pub type PC<const PIN: u8> = GPIO<"C", PIN>;
+pub type PD<const PIN: u8> = GPIO<"D", PIN>;
+pub type PE<const PIN: u8> = GPIO<"E", PIN>;
+pub type PF<const PIN: u8> = GPIO<"F", PIN>;
+pub type PG<const PIN: u8> = GPIO<"G", PIN>;
+pub type PH<const PIN: u8> = GPIO<"H", PIN>;
+#[cfg(any(feature = "h747cm4", feature = "h747cm7",))]
+pub type PI<const PIN: u8> = GPIO<"I", PIN>;

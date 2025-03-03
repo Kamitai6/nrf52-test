@@ -9,7 +9,7 @@ exclude = [".gitignore"]
 [dependencies]
 cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
 stm32h7 = { version = "^0.15.1" }
-
+fugit = "0.3.5"
 smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"]}
 
 [features]

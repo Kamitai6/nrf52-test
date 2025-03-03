@@ -13,10 +13,7 @@
 //     }
 // }
 
-use core::{
-    ops::Deref,
-    sync::atomic::{self, Ordering},
-};
+use core::sync::atomic::{self, Ordering};
 
 use crate::{
     pac::{self, RCC},
@@ -24,19 +21,18 @@ use crate::{
     // MAX_ITERS,
 };
 
-use crate::pac::{dma1, dma2, DMA1, DMA2};
-use pac::DMAMUX1 as DMAMUX;
-use pac::DMAMUX2;
-
-// todo: Several sections of this are only correct for DMA1.
-
-#[derive(Clone, Copy)]
-pub enum DmaPeriph {
-    Dma1,
-    Dma2,
+#[derive(Copy, Clone)]
+#[repr(usize)]
+pub enum DmaChannel {
+    C0 = 0,
+    C1 = 1,
+    C2 = 2,
+    C3 = 3,
+    C4 = 4,
+    C5 = 5,
+    C6 = 6,
+    C7 = 7,
 }
-
-// todo: Trigger, synchronization etc mappings. Perhaps DmaTrigger, DmaSync enums etc.
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -171,23 +167,6 @@ pub enum Priority {
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-/// Represents a DMA channel to select, eg when configuring for use with a peripheral.
-/// u8 representation is used to index registers on H7 PAC (And hopefully on future PACs if they
-/// adopt H7's approach)
-pub enum DmaChannel {
-    // H7 calls these Streams. We use the `Channel` name for consistency.
-    C0 = 0,
-    C1 = 1,
-    C2 = 2,
-    C3 = 3,
-    C4 = 4,
-    C5 = 5,
-    C6 = 6,
-    C7 = 7,
-}
-
-#[derive(Copy, Clone)]
-#[repr(u8)]
 /// Set in CCR.
 /// Can only be set when channel is disabled.
 pub enum Direction {
@@ -222,12 +201,13 @@ pub enum IncrMode {
 /// Peripheral and memory increment mode. (CCR PSIZE and MSIZE bits)
 /// Can only be set when channel is disabled.
 pub enum DataSize {
-    S8 = 0b00, // ie 8 bits
-    S16 = 0b01,
-    S32 = 0b10,
+    S8 = 0, // ie 8 bits
+    S16 = 1,
+    S32 = 2,
 }
 
 #[derive(Copy, Clone)]
+#[repr(u8)]
 /// Interrupt type. Set in CCR using TEIE, HTIE, and TCIE bits.
 /// Can only be set when channel is disabled.
 pub enum DmaInterrupt {
@@ -270,22 +250,26 @@ impl Default for ChannelCfg {
 }
 
 /// Represents a Direct Memory Access (DMA) peripheral.
-pub struct Dma<D> {
-    pub regs: D,
+pub struct Dma<const N: u8> {
+    regs_ptr: *const pac::dma1::RegisterBlock,
 }
 
-impl<D> Dma<D>
-where
-    D: Deref<Target = dma1::RegisterBlock>,
-{
+impl<const N: u8> Dma<N> {
+    const CHECK: () = {
+        assert!(1 <= N && N <= 2, "Dma must be 1 - 2.");
+    };
     /// Initialize a DMA peripheral, including enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new(regs: D) -> Self {
-        // todo: Enable RCC for DMA 2 etc!
+    pub fn new() -> Self {
+        let regs_ptr = match N {
+            1 => pac::DMA1::ptr(),
+            2 => pac::DMA2::ptr(),
+        };
+
         let rcc = unsafe { &(*RCC::ptr()) };
         // rcc_en_reset!(ahb1, dma1, rcc);
 
-        Self { regs }
+        Self { regs_ptr }
     }
 
     /// Configure a DMA channel. See L4 RM 0394, section 11.4.4. Sets the Transfer Complete
@@ -301,7 +285,7 @@ where
         mem_size: DataSize,
         cfg: ChannelCfg,
     ) {
-        let regs = &mut self.regs;
+        let regs = unsafe { &(*self.regs_ptr) };
         // todo: The H7 sections are different, but we consolidated the comments. Figure out
         // todo what's different and fix it by following the steps
 
@@ -399,242 +383,183 @@ where
             while cr.read().en().bit_is_clear() {}
         }
     }
-}
 
-/// Stop a DMA transfer, if in progress.
-fn stop_internal<D>(regs: &mut D, channel: DmaChannel)
-where
-    D: Deref<Target = dma1::RegisterBlock>,
-{
-    // L4 RM:
-    // Once the software activates a channel, it waits for the completion of the programmed
-    // transfer. The DMA controller is not able to resume an aborted active channel with a possible
-    // suspended bus transfer.
-    // To correctly stop and disable a channel, the software clears the EN bit of the DMA_CCRx
-    // register.
+    /// Stop a DMA transfer, if in progress.
+    pub fn stop(mut self, channel: DmaChannel) {
+        let regs = unsafe { &(*self.regs_ptr) };
+        // L4 RM:
+        // Once the software activates a channel, it waits for the completion of the programmed
+        // transfer. The DMA controller is not able to resume an aborted active channel with a possible
+        // suspended bus transfer.
+        // To correctly stop and disable a channel, the software clears the EN bit of the DMA_CCRx
+        // register.
+    
+        // The software secures that no pending request from the peripheral is served by the
+        // DMA controller before the transfer completion.
+        // todo?
+    
+        let cr = &regs.st[channel as usize].cr;
+        cr.modify(|_, w| w.en().clear_bit());
+        while cr.read().en().bit_is_set() {}
+    
+        // The software waits for the transfer complete or transfer error interrupt.
+        // (Handed by calling code)
+    
+        // (todo: set ifcr.cficx bit to clear all interrupts?)
+    
+        // When a channel transfer error occurs, the EN bit of the DMA_CCRx register is cleared by
+        // hardware. This EN bit can not be set again by software to re-activate the channel x, until the
+        // TEIFx bit of the DMA_ISR register is set
+    }
 
-    // The software secures that no pending request from the peripheral is served by the
-    // DMA controller before the transfer completion.
-    // todo?
+    /// Enable a specific type of interrupt.
+    pub fn enable_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    {
+        let regs = unsafe { &(*self.regs_ptr) };
+        // Can only be set when the channel is disabled.
+        let cr = &regs.st[channel as usize].cr;
 
-    let cr = &regs.st[channel as usize].cr;
-    cr.modify(|_, w| w.en().clear_bit());
-    while cr.read().en().bit_is_set() {}
-
-    // The software waits for the transfer complete or transfer error interrupt.
-    // (Handed by calling code)
-
-    // (todo: set ifcr.cficx bit to clear all interrupts?)
-
-    // When a channel transfer error occurs, the EN bit of the DMA_CCRx register is cleared by
-    // hardware. This EN bit can not be set again by software to re-activate the channel x, until the
-    // TEIFx bit of the DMA_ISR register is set
-}
-
-/// Stop a DMA transfer, if in progress.
-pub fn stop(periph: DmaPeriph, channel: DmaChannel) {
-    match periph {
-        DmaPeriph::Dma1 => {
-            let mut regs = unsafe { &(*DMA1::ptr()) };
-            stop_internal(&mut regs, channel);
-        }
-        DmaPeriph::Dma2 => {
-            let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-            stop_internal(&mut regs, channel);
+        match interrupt {
+            DmaInterrupt::TransferError => cr.modify(|_, w| w.teie().set_bit()),
+            DmaInterrupt::HalfTransfer => cr.modify(|_, w| w.htie().set_bit()),
+            DmaInterrupt::TransferComplete => cr.modify(|_, w| w.tcie().set_bit()),
+            DmaInterrupt::DirectModeError => cr.modify(|_, w| w.dmeie().set_bit()),
+            DmaInterrupt::FifoError => regs.st[channel as usize]
+                .fcr
+                .modify(|_, w| w.feie().set_bit()),
         }
     }
-}
 
-fn clear_interrupt_internal<D>(regs: &mut D, channel: DmaChannel, interrupt: DmaInterrupt)
-where
-    D: Deref<Target = dma1::RegisterBlock>,
-{
-    match channel {
-        DmaChannel::C0 => match interrupt {
-            DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif0().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif0().set_bit()),
-            DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif0().set_bit()),
-            DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif0().set_bit()),
-            DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif0().set_bit()),
-        }
-        DmaChannel::C1 => match interrupt {
-            DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif1().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif1().set_bit()),
-            DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif1().set_bit()),
-            DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif1().set_bit()),
-            DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif1().set_bit()),
-        }
-        DmaChannel::C2 => match interrupt {
-            DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif2().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif2().set_bit()),
-            DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif2().set_bit()),
-            DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif2().set_bit()),
-            DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif2().set_bit()),
-        }
-        DmaChannel::C3 => match interrupt {
-            DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif3().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif3().set_bit()),
-            DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif3().set_bit()),
-            DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif3().set_bit()),
-            DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif3().set_bit()),
-        }
-        DmaChannel::C4 => match interrupt {
-            DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif4().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif4().set_bit()),
-            DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif4().set_bit()),
-            DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif4().set_bit()),
-            DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif4().set_bit()),
-        }
-        DmaChannel::C5 => match interrupt {
-            DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif5().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif5().set_bit()),
-            DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif5().set_bit()),
-            DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif5().set_bit()),
-            DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif5().set_bit()),
-        }
-        DmaChannel::C6 => match interrupt {
-            DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif6().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif6().set_bit()),
-            DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif6().set_bit()),
-            DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif6().set_bit()),
-            DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif6().set_bit()),
-        }
-        DmaChannel::C7 => match interrupt {
-            DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif7().set_bit()),
-            DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif7().set_bit()),
-            DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif7().set_bit()),
-            DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif7().set_bit()),
-            DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif7().set_bit()),
+    pub fn disable_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    {
+        let regs = unsafe { &(*self.regs_ptr) };
+        // Can only be set when the channel is disabled.
+        let cr = &regs.st[channel as usize].cr;
+
+        // todo DRY
+
+        match interrupt {
+            DmaInterrupt::TransferError => cr.modify(|_, w| w.teie().clear_bit()),
+            DmaInterrupt::HalfTransfer => cr.modify(|_, w| w.htie().clear_bit()),
+            DmaInterrupt::TransferComplete => cr.modify(|_, w| w.tcie().clear_bit()),
+            DmaInterrupt::DirectModeError => cr.modify(|_, w| w.dmeie().clear_bit()),
+            DmaInterrupt::FifoError => regs.st[channel as usize]
+                .fcr
+                .modify(|_, w| w.feie().clear_bit()),
         }
     }
-}
 
-fn enable_interrupt_internal<D>(regs: &mut D, channel: DmaChannel, interrupt: DmaInterrupt)
-where
-    D: Deref<Target = dma1::RegisterBlock>,
-{
-    // Can only be set when the channel is disabled.
-    let cr = &regs.st[channel as usize].cr;
-
-    match interrupt {
-        DmaInterrupt::TransferError => cr.modify(|_, w| w.teie().set_bit()),
-        DmaInterrupt::HalfTransfer => cr.modify(|_, w| w.htie().set_bit()),
-        DmaInterrupt::TransferComplete => cr.modify(|_, w| w.tcie().set_bit()),
-        DmaInterrupt::DirectModeError => cr.modify(|_, w| w.dmeie().set_bit()),
-        DmaInterrupt::FifoError => regs.st[channel as usize]
-            .fcr
-            .modify(|_, w| w.feie().set_bit()),
-    }
-}
-
-fn disable_interrupt_internal<D>(regs: &mut D, channel: DmaChannel, interrupt: DmaInterrupt)
-where
-    D: Deref<Target = dma1::RegisterBlock>,
-{
-    // Can only be set when the channel is disabled.
-    let cr = &regs.st[channel as usize].cr;
-
-    // todo DRY
-
-    match interrupt {
-        DmaInterrupt::TransferError => cr.modify(|_, w| w.teie().clear_bit()),
-        DmaInterrupt::HalfTransfer => cr.modify(|_, w| w.htie().clear_bit()),
-        DmaInterrupt::TransferComplete => cr.modify(|_, w| w.tcie().clear_bit()),
-        DmaInterrupt::DirectModeError => cr.modify(|_, w| w.dmeie().clear_bit()),
-        DmaInterrupt::FifoError => regs.st[channel as usize]
-            .fcr
-            .modify(|_, w| w.feie().clear_bit()),
-    }
-}
-
-/// Enable a specific type of interrupt.
-pub fn enable_interrupt(periph: DmaPeriph, channel: DmaChannel, interrupt: DmaInterrupt) {
-    match periph {
-        DmaPeriph::Dma1 => {
-            let mut regs = unsafe { &(*DMA1::ptr()) };
-            enable_interrupt_internal(&mut regs, channel, interrupt);
-        }
-        DmaPeriph::Dma2 => {
-            let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-            enable_interrupt_internal(&mut regs, channel, interrupt);
-        }
-    }
-}
-
-/// Disable a specific type of interrupt.
-pub fn disable_interrupt(periph: DmaPeriph, channel: DmaChannel, interrupt: DmaInterrupt) {
-    match periph {
-        DmaPeriph::Dma1 => {
-            let mut regs = unsafe { &(*DMA1::ptr()) };
-            disable_interrupt_internal(&mut regs, channel, interrupt);
-        }
-        DmaPeriph::Dma2 => {
-            let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-            disable_interrupt_internal(&mut regs, channel, interrupt);
-        }
-    }
-}
-
-/// Clear an interrupt flag.
-pub fn clear_interrupt(periph: DmaPeriph, channel: DmaChannel, interrupt: DmaInterrupt) {
-    match periph {
-        DmaPeriph::Dma1 => {
-            let mut regs = unsafe { &(*DMA1::ptr()) };
-            clear_interrupt_internal(&mut regs, channel, interrupt);
-        }
-        DmaPeriph::Dma2 => {
-            let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-            clear_interrupt_internal(&mut regs, channel, interrupt);
-        }
-    }
-}
-
-/// Configure a specific DMA channel to work with a specific peripheral.
-pub fn mux(periph: DmaPeriph, channel: DmaChannel, input: DmaInput) {
-    // Note: This is similar in API and purpose to `channel_select` above,
-    // for different families. We're keeping it as a separate function instead
-    // of feature-gating within the same function so the name can be recognizable
-    // from the RM etc.
-
-    // G4 example:
-    // "The mapping of resources to DMAMUX is hardwired.
-    // DMAMUX is used with DMA1 and DMA2:
-    // For category 3 and category 4 devices:
-    // •
-    // DMAMUX channels 0 to 7 are connected to DMA1 channels 1 to 8
-    // •
-    // DMAMUX channels 8 to 15 are connected to DMA2 channels 1 to 8
-    // For category 2 devices:
-    // •
-    // DMAMUX channels 0 to 5 are connected to DMA1 channels 1 to 6
-    // •
-    // DMAMUX channels 6 to 11 are connected to DMA2 channels 1 to 6"
-    //
-    // H723/25/33/35"
-    // DMAMUX1 is used with DMA1 and DMA2 in D2 domain
-    // •
-    // DMAMUX1 channels 0 to 7 are connected to DMA1 channels 0 to 7
-    // •
-    // DMAMUX1 channels 8 to 15 are connected to DMA2 channels 0 to 7
-    // (Note: The H7 and G4 cat 3/4 mappings are the same, except for H7's use of 0-7, and G4's use of 1-8.)
-
-    // todo: With this in mind, some of the mappings below are not correct on some G4 variants.
-
-    unsafe {
-        let mux = unsafe { &(*DMAMUX::ptr()) };
-
-        match periph {
-            DmaPeriph::Dma1 => {
-                mux.ccr[channel as usize].modify(|_, w| w.dmareq_id().bits(input as u8));
+    pub fn clear_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    {
+        let regs = unsafe { &(*self.regs_ptr) };
+        match channel {
+            DmaChannel::C0 => match interrupt {
+                DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif0().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif0().set_bit()),
+                DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif0().set_bit()),
+                DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif0().set_bit()),
+                DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif0().set_bit()),
             }
-            DmaPeriph::Dma2 => {
-                mux.ccr[channel as usize + 8].modify(|_, w| w.dmareq_id().bits(input as u8));
+            DmaChannel::C1 => match interrupt {
+                DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif1().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif1().set_bit()),
+                DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif1().set_bit()),
+                DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif1().set_bit()),
+                DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif1().set_bit()),
+            }
+            DmaChannel::C2 => match interrupt {
+                DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif2().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif2().set_bit()),
+                DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif2().set_bit()),
+                DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif2().set_bit()),
+                DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif2().set_bit()),
+            }
+            DmaChannel::C3 => match interrupt {
+                DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif3().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.lifcr.write(|w| w.chtif3().set_bit()),
+                DmaInterrupt::TransferComplete => regs.lifcr.write(|w| w.ctcif3().set_bit()),
+                DmaInterrupt::DirectModeError => regs.lifcr.write(|w| w.cdmeif3().set_bit()),
+                DmaInterrupt::FifoError => regs.lifcr.write(|w| w.cfeif3().set_bit()),
+            }
+            DmaChannel::C4 => match interrupt {
+                DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif4().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif4().set_bit()),
+                DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif4().set_bit()),
+                DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif4().set_bit()),
+                DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif4().set_bit()),
+            }
+            DmaChannel::C5 => match interrupt {
+                DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif5().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif5().set_bit()),
+                DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif5().set_bit()),
+                DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif5().set_bit()),
+                DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif5().set_bit()),
+            }
+            DmaChannel::C6 => match interrupt {
+                DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif6().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif6().set_bit()),
+                DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif6().set_bit()),
+                DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif6().set_bit()),
+                DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif6().set_bit()),
+            }
+            DmaChannel::C7 => match interrupt {
+                DmaInterrupt::TransferError => regs.hifcr.write(|w| w.cteif7().set_bit()),
+                DmaInterrupt::HalfTransfer => regs.hifcr.write(|w| w.chtif7().set_bit()),
+                DmaInterrupt::TransferComplete => regs.hifcr.write(|w| w.ctcif7().set_bit()),
+                DmaInterrupt::DirectModeError => regs.hifcr.write(|w| w.cdmeif7().set_bit()),
+                DmaInterrupt::FifoError => regs.hifcr.write(|w| w.cfeif7().set_bit()),
             }
         }
     }
-}
 
-/// Configure a specific DMA channel to work with a specific peripheral, on DMAMUX2.
-pub fn mux2(periph: DmaPeriph, channel: DmaChannel, input: DmaInput2, mux: &mut DMAMUX2) {
-    mux.ccr[channel as usize].modify(|_, w| unsafe { w.dmareq_id().bits(input as u8) });
+    /// Configure a specific DMA channel to work with a specific peripheral.
+    pub fn mux1(channel: DmaChannel, input: DmaInput) {
+        // Note: This is similar in API and purpose to `channel_select` above,
+        // for different families. We're keeping it as a separate function instead
+        // of feature-gating within the same function so the name can be recognizable
+        // from the RM etc.
+
+        // G4 example:
+        // "The mapping of resources to DMAMUX is hardwired.
+        // DMAMUX is used with DMA1 and DMA2:
+        // For category 3 and category 4 devices:
+        // •
+        // DMAMUX channels 0 to 7 are connected to DMA1 channels 1 to 8
+        // •
+        // DMAMUX channels 8 to 15 are connected to DMA2 channels 1 to 8
+        // For category 2 devices:
+        // •
+        // DMAMUX channels 0 to 5 are connected to DMA1 channels 1 to 6
+        // •
+        // DMAMUX channels 6 to 11 are connected to DMA2 channels 1 to 6"
+        //
+        // H723/25/33/35"
+        // DMAMUX1 is used with DMA1 and DMA2 in D2 domain
+        // •
+        // DMAMUX1 channels 0 to 7 are connected to DMA1 channels 0 to 7
+        // •
+        // DMAMUX1 channels 8 to 15 are connected to DMA2 channels 0 to 7
+        // (Note: The H7 and G4 cat 3/4 mappings are the same, except for H7's use of 0-7, and G4's use of 1-8.)
+
+        // todo: With this in mind, some of the mappings below are not correct on some G4 variants.
+
+        unsafe {
+            let mux = unsafe { &(*pac::DMAMUX1::ptr()) };
+
+            match N {
+                1 => {
+                    mux.ccr[channel as usize].modify(|_, w| w.dmareq_id().bits(input as u8));
+                }
+                2 => {
+                    mux.ccr[channel as usize + 8].modify(|_, w| w.dmareq_id().bits(input as u8));
+                }
+            }
+        }
+    }
+
+    /// Configure a specific DMA channel to work with a specific peripheral, on DMAMUX2.
+    pub fn mux2(channel: DmaChannel, input: DmaInput2) {
+        let mux = unsafe { &(*pac::DMAMUX2::ptr()) };
+        mux.ccr[channel as usize].modify(|_, w| unsafe { w.dmareq_id().bits(input as u8) });
+    }
 }

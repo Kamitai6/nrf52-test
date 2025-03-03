@@ -8,35 +8,52 @@ const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 use crate::pac;
 
 use super::dma;
-use super::gpio::{GPIO, PinMode, Port};
+use super::gpio;
 
 #[derive(Copy, Clone, Debug)]
+#[repr(u8)]
 pub enum Error {
-    Overrun,
+    Overrun = 0,
     ModeFault,
     Crc,
     Hardware,
     DuplexFailed, // todo temp?
 }
 
+macro_rules! check_errors {
+    ($sr:expr) => {
+        let crc_error = $sr.crce().bit_is_set();
+
+        if $sr.ovr().bit_is_set() {
+            return Err(Error::Overrun);
+        } else if $sr.modf().bit_is_set() {
+            return Err(Error::ModeFault);
+        } else if crc_error {
+            return Err(Error::Crc);
+        }
+    };
+}
+
 #[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
 /// Select the duplex communication mode between the 2 devices. Sets `CR1` register, `BIDIMODE`,
 /// and `RXONLY` fields.
 pub enum CommMode {
-    FullDuplex,
+    FullDuplex = 0,
     HalfDuplex,
     TransmitOnly,
     ReceiveOnly,
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
 /// Used for managing NSS / CS pin. Sets CR1 register, SSM field.
 /// On H7, sets CFG2 register, `SSOE` field.
 pub enum SlaveSelect {
     ///  In this configuration, slave select information
     /// is driven internally by the SSI bit value in register SPIx_CR1. The external NSS pin is
     /// free for other application uses.
-    Software,
+    Software = 0,
     /// This configuration is only used when the
     /// MCU is set as master. The NSS pin is managed by the hardware. The NSS signal
     /// is driven low as soon as the SPI is enabled in master mode (SPE=1), and is kept
@@ -53,6 +70,7 @@ pub enum SlaveSelect {
 }
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
 /// Clock polarity. Sets CFGR2 register, CPOL field. Stored in the config as a field of `SpiMode`.
 pub enum Polarity {
     IdleLow = 0,
@@ -60,6 +78,7 @@ pub enum Polarity {
 }
 
 #[derive(Clone, Copy)]
+#[repr(u8)]
 /// Clock phase. Sets CFGR2 register, CPHA field. Stored in the config as a field of `SpiMode`.
 pub enum Phase {
     CaptureOnFirstTransition = 0,
@@ -113,8 +132,6 @@ impl SpiMode {
     }
 }
 
-type SpiModeType = SpiMode;
-
 /// Set the factor to divide the APB clock by to set baud rate. Sets `SPI_CR1` register, `BR` field.
 /// On H7, sets CFG1 register, `MBR` field.
 #[derive(Copy, Clone)]
@@ -131,9 +148,10 @@ pub enum BaudRate {
 }
 
 #[derive(Copy, Clone)]
+#[repr(u8)]
 pub enum Interrupt {
     /// Additional number of transactions reload interrupt enable (TSERFIE)
-    NumberOfTransactionsReload,
+    NumberOfTransactionsReload = 0,
     ModeFault,
     Tifre,
     CrcError,
@@ -145,6 +163,41 @@ pub enum Interrupt {
     Dxp,
     Txp,
     Rxp,
+}
+
+/// Number of bits in at single SPI data frame. Sets `CFGR1` register, `DSIZE` field.
+#[derive(Copy, Clone)]
+#[repr(u8)]
+pub enum DataSize {
+    D4 = 3,
+    D5 = 4,
+    D6 = 5,
+    D7 = 6,
+    D8 = 7,
+    D9 = 8,
+    D10 = 9,
+    D11 = 10,
+    D12 = 11,
+    D13 = 12,
+    D14 = 13,
+    D15 = 14,
+    D16 = 15,
+    D17 = 16,
+    D18 = 17,
+    D19 = 18,
+    D20 = 19,
+    D21 = 20,
+    D22 = 21,
+    D23 = 22,
+    D24 = 23,
+    D25 = 24,
+    D26 = 25,
+    D27 = 26,
+    D28 = 27,
+    D29 = 28,
+    D30 = 29,
+    D31 = 30,
+    D32 = 31,
 }
 
 #[derive(Clone, Copy)]
@@ -161,13 +214,13 @@ pub enum ReceptionThresh {
 /// Configuration data for SPI.
 pub struct SpiConfig {
     /// SPI mode associated with Polarity and Phase. Defaults to Mode0: Idle low, capture on first transition.
-    pub mode: SpiModeType,
+    pub mode: SpiMode,
     /// Sets the (duplex) communication mode between the devices. Defaults to full duplex.
     pub comm_mode: CommMode,
     /// Controls use of hardware vs software CS/NSS pin. Defaults to software.
     pub slave_select: SlaveSelect,
     /// Data size. Defaults to 8 bits.
-    pub data_size: u8,
+    pub data_size: DataSize,
     /// FIFO reception threshhold. Defaults to 8 bits.
     pub fifo_reception_thresh: ReceptionThresh,
     // pub cs_delay: f32,
@@ -179,10 +232,10 @@ pub struct SpiConfig {
 impl Default for SpiConfig {
     fn default() -> Self {
         Self {
-            mode: SpiModeType::mode0(),
+            mode: SpiMode::mode0(),
             comm_mode: CommMode::FullDuplex,
             slave_select: SlaveSelect::Software,
-            data_size: 8,
+            data_size: DataSize::D8,
             fifo_reception_thresh: ReceptionThresh::D8,
             band_rate: BaudRate::Div128,
         }
@@ -191,60 +244,79 @@ impl Default for SpiConfig {
 
 // Depth of FIFO to use. See RM0433 Rev 7, Table 409. Note that 16 is acceptable on this MCU,
 // for SPI 1-3
-const FIFO_LEN: usize = 8;
+const FIFO_LEN: u8 = 8;
 
-pub struct Spi<const N: usize> {
+pub struct Spi<const N: u8> {
     regs_ptr: *const pac::spi1::RegisterBlock,
     pub cfg: SpiConfig,
 }
 
-impl<const N: usize> Spi<N> {
+impl<const N: u8> Spi<N> {
+    const CHECK: () = {
+        assert!(1 <= N && N <= 6, "Spi must be 1 - 6.");
+    };
     /// Initialize an SPI peripheral, including configuration register writes, and enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new(sck: GPIO, miso: GPIO, mosi: GPIO, cfg: SpiConfig) -> Self {
-        assert!(
-            matches!(sck.mode, PinMode::AltFn(5)) & 
-            matches!(sck.mode, PinMode::AltFn(5)) & 
-            matches!(sck.mode, PinMode::AltFn(5)), "Mode is not Analog");
+    pub fn new<
+        const SCK_PORT: char, const SCK_PIN: u8, 
+        const MISO_PORT: char, const MISO_PIN: u8, 
+        const MOSI_PORT: char, const MOSI_PIN: u8
+    >(
+        sck: gpio::GPIO<SCK_PORT, SCK_PIN>, 
+        miso: gpio::GPIO<MISO_PORT, MISO_PIN>, 
+        mosi: gpio::GPIO<MOSI_PORT, MOSI_PIN>, 
+        cfg: SpiConfig
+    ) -> Self {
+        let _ = Self::CHECK;
 
-        match N {
-            1 => {
-                assert!(
-                    match sck.port {
-                        Port::A => (0..=7).contains(&gpio_pin.pin),
-                        Port::B => (0..=1).contains(&gpio_pin.pin),
-                        Port::C => (0..=5).contains(&gpio_pin.pin),
-                        Port::F => (11..=12).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
+        assert!(
+            matches!(sck.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)) && 
+            matches!(miso.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)) && 
+            matches!(mosi.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)), "Mode is not AltFn 5 push-pull"
+        );
+
+        assert!(
+            match N {
+                1 => {
+                    ((SCK_PORT == "A" && SCK_PIN == 5) || (SCK_PORT == "B" && SCK_PIN == 3) || (SCK_PORT == "G" && SCK_PIN == 11)) &&
+                    ((MISO_PORT == "A" && MISO_PIN == 6) || (MISO_PORT == "B" && MISO_PIN == 4) || (MISO_PORT == "G" && MISO_PIN == 9)) &&
+                    ((MOSI_PORT == "A" && MOSI_PIN == 7) || (MOSI_PORT == "B" && MOSI_PIN == 5) || (MOSI_PORT == "D" && MOSI_PIN == 7))
+                },
+                2 => {
+                    ((SCK_PORT == "A" && SCK_PIN == 9) || (SCK_PORT == "A" && SCK_PIN == 12) || (SCK_PORT == "B" && SCK_PIN == 10) ||
+                        (SCK_PORT == "B" && SCK_PIN == 13) || (SCK_PORT == "D" && SCK_PIN == 3) || (SCK_PORT == "I" && SCK_PIN == 1)) &&
+                    ((MISO_PORT == "B" && MISO_PIN == 14) || (MISO_PORT == "C" && MISO_PIN == 2) || (MISO_PORT == "I" && MISO_PIN == 2)) &&
+                    ((MOSI_PORT == "C" && MOSI_PIN == 1) || (MOSI_PORT == "C" && MOSI_PIN == 3) || (MOSI_PORT == "I" && MOSI_PIN == 3))
+                },
+                3 => {
+                    ((SCK_PORT == "B" && SCK_PIN == 3) || (SCK_PORT == "C" && SCK_PIN == 10)) &&
+                    ((MISO_PORT == "B" && MISO_PIN == 4) || (MISO_PORT == "C" && MISO_PIN == 11)) &&
+                    ((MOSI_PORT == "B" && MOSI_PIN == 2) || (MOSI_PORT == "B" && MOSI_PIN == 5) || (MOSI_PORT == "C" && MOSI_PIN == 12) ||
+                     (MOSI_PORT == "D" && MOSI_PIN == 6))
+                },
+                4 => {
+                    ((SCK_PORT == "E" && SCK_PIN == 2) || (SCK_PORT == "E" && SCK_PIN == 12)) &&
+                    ((MISO_PORT == "E" && MISO_PIN == 5) || (MISO_PORT == "E" && MISO_PIN == 13)) &&
+                    ((MOSI_PORT == "E" && MOSI_PIN == 6) || (MOSI_PORT == "E" && MOSI_PIN == 14))
+                },
+                5 => {
+                    ((SCK_PORT == "F" && SCK_PIN == 7) || (SCK_PORT == "H" && SCK_PIN == 6) ||
+                     (SCK_PORT == "K" && SCK_PIN == 0)) &&
+                    ((MISO_PORT == "F" && MISO_PIN == 8) || (MISO_PORT == "H" && MISO_PIN == 7) ||
+                     (MISO_PORT == "J" && MISO_PIN == 11)) &&
+                    ((MOSI_PORT == "F" && MOSI_PIN == 9) || (MOSI_PORT == "F" && MOSI_PIN == 11) ||
+                     (MOSI_PORT == "J" && MOSI_PIN == 10))
+                },
+                6 => {
+                    ((SCK_PORT == "A" && SCK_PIN == 5) || (SCK_PORT == "B" && SCK_PIN == 3) ||
+                     (SCK_PORT == "C" && SCK_PIN == 12) || (SCK_PORT == "G" && SCK_PIN == 13)) &&
+                    ((MISO_PORT == "A" && MISO_PIN == 6) || (MISO_PORT == "B" && MISO_PIN == 4) ||
+                     (MISO_PORT == "G" && MISO_PIN == 12)) &&
+                    ((MOSI_PORT == "A" && MOSI_PIN == 7) || (MOSI_PORT == "B" && MOSI_PIN == 5) ||
+                     (MOSI_PORT == "G" && MOSI_PIN == 14))
+                },
             }
-            2 => {
-                assert!(
-                    match gpio_pin.port {
-                        Port::A => (2..=7).contains(&gpio_pin.pin),
-                        Port::B => (0..=1).contains(&gpio_pin.pin),
-                        Port::C => (0..=5).contains(&gpio_pin.pin),
-                        Port::F => (13..=14).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
-            }
-            3 => {
-                assert!(
-                    match gpio_pin.port {
-                        Port::C => (0..=2).contains(&gpio_pin.pin),
-                        Port::F => (3..=10).contains(&gpio_pin.pin),
-                        Port::H => (2..=5).contains(&gpio_pin.pin),
-                        _ => false,
-                    },
-                    "Pin is not collect"
-                );
-            }
-            _ => panic!("Unsupported ADC number")
-        }
+        );
         
         let regs_ptr: *const pac::spi1::RegisterBlock = match N {
             1 => pac::SPI1::ptr(),
@@ -256,7 +328,7 @@ impl<const N: usize> Spi<N> {
         let periph = unsafe { &(*regs_ptr)};
 
         // Enable clock for SPI
-        let _ = prec.enable(); // drop, can be recreated by free method
+        // let _ = prec.enable(); // drop, can be recreated by free method
 
         // Disable SS output
         periph.cfg2.write(|w| w.ssoe().disabled());
@@ -289,7 +361,7 @@ impl<const N: usize> Spi<N> {
 
             periph.cfg1.modify(|_, w| {
             w.mbr().bits(cfg.baud_rate as u8);
-            w.dsize().bits((cfg.data_size - 1) as u8);
+            w.dsize().bits((cfg.data_size as u8) - 1);
             w.crcen().clear_bit()
         });
 
@@ -392,7 +464,7 @@ impl<const N: usize> Spi<N> {
     /// Assumes at least one word has already been written to the Tx FIFO
     pub fn read(&mut self) -> Result<u8, Error> {
         let periph = unsafe { &(*self.regs_ptr)};
-        check_errors!(self.regs.sr.read());
+        check_errors!(periph.sr.read());
 
         let mut i = 0;
         while !periph.sr.read().rxp().is_not_empty() {
@@ -462,7 +534,7 @@ impl<const N: usize> Spi<N> {
 
     fn send(&mut self, word: u8) -> Result<(), Error> {
         let periph = unsafe { &(*self.regs_ptr)};
-        check_errors!(self.regs.sr.read());
+        check_errors!(periph.sr.read());
 
         // NOTE(write_volatile) see note above
         unsafe {
@@ -477,12 +549,12 @@ impl<const N: usize> Spi<N> {
     }
 
     /// Receive data using DMA. See H743 RM, section 50.4.14: Communication using DMA
-    pub unsafe fn read_dma(
+    pub unsafe fn read_dma<const DMA_NUM: u8>(
         &mut self,
         buf: &mut [u8],
-        channel: DmaChannel,
-        channel_cfg: ChannelCfg,
-        dma_periph: dma::DmaPeriph,
+        channel: dma::DmaChannel,
+        channel_cfg: dma::ChannelCfg,
+        dma_periph: &dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
@@ -494,48 +566,27 @@ impl<const N: usize> Spi<N> {
         let periph_addr = &periph.rxdr as *const _ as u32;
         let num_data = len as u32;
 
-        match dma_periph {
-            dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel,
-                    periph_addr,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg,
-                );
-            }
-
-            dma::DmaPeriph::Dma2 => {
-                let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel,
-                    periph_addr,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg,
-                );
-            }
-        }
+        dma_periph.cfg_channel(
+            channel,
+            periph_addr,
+            ptr as u32,
+            num_data,
+            dma::Direction::ReadFromPeriph,
+            dma::DataSize::S8,
+            dma::DataSize::S8,
+            channel_cfg,
+        );
 
         periph.cr1.modify(|_, w| w.spe().set_bit());
         periph.cr1.modify(|_, w| w.cstart().set_bit()); // Must be separate from SPE enable.
     }
 
-    pub unsafe fn write_dma(
+    pub unsafe fn write_dma<const DMA_NUM: u8>(
         &mut self,
         buf: &[u8],
-        channel: DmaChannel,
-        channel_cfg: ChannelCfg,
-        dma_periph: dma::DmaPeriph,
+        channel: dma::DmaChannel,
+        channel_cfg: dma::ChannelCfg,
+        dma_periph: &dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // Static write and read buffers?
@@ -561,36 +612,16 @@ impl<const N: usize> Spi<N> {
         let periph_addr = &periph.txdr as *const _ as u32;
         let num_data = len as u32;
 
-        match dma_periph {
-            dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel,
-                    periph_addr,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromMem,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg,
-                );
-            }
-            dma::DmaPeriph::Dma2 => {
-                let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel,
-                    periph_addr,
-                    ptr as u32,
-                    num_data,
-                    dma::Direction::ReadFromMem,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg,
-                );
-            }
-        }
+        dma_periph.cfg_channel(
+            channel,
+            periph_addr,
+            ptr as u32,
+            num_data,
+            dma::Direction::ReadFromMem,
+            dma::DataSize::S8,
+            dma::DataSize::S8,
+            channel_cfg,
+        );
 
         // 3. Enable DMA Tx buffer in the TXDMAEN bit in the SPI_CR2 register, if DMA Tx is used.
         periph.cfg1.modify(|_, w| w.txdmaen().set_bit());
@@ -602,15 +633,15 @@ impl<const N: usize> Spi<N> {
 
     /// Transfer data from DMA; this is the basic reading API, using both write and read transfers:
     /// It performs a write with register data, and reads to a buffer.
-    pub unsafe fn transfer_dma(
+    pub unsafe fn transfer_dma<const DMA_NUM: u8>(
         &mut self,
         buf_write: &[u8],
         buf_read: &mut [u8],
-        channel_write: DmaChannel,
-        channel_read: DmaChannel,
-        channel_cfg_write: ChannelCfg,
-        channel_cfg_read: ChannelCfg,
-        dma_periph: dma::DmaPeriph,
+        channel_write: dma::DmaChannel,
+        channel_read: dma::DmaChannel,
+        channel_cfg_write: dma::ChannelCfg,
+        channel_cfg_read: dma::ChannelCfg,
+        dma_periph: &dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
@@ -631,61 +662,27 @@ impl<const N: usize> Spi<N> {
         // enable the channels, and the SPI periph.
         periph.cfg1.modify(|_, w| w.rxdmaen().set_bit());
 
-        match dma_periph {
-            dma::DmaPeriph::Dma1 => {
-                let mut regs = unsafe { &(*pac::DMA1::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel_write,
-                    periph_addr_write,
-                    ptr_write as u32,
-                    num_data_write,
-                    dma::Direction::ReadFromMem,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg_write,
-                );
+        dma_periph.cfg_channel(
+            channel_write,
+            periph_addr_write,
+            ptr_write as u32,
+            num_data_write,
+            dma::Direction::ReadFromMem,
+            dma::DataSize::S8,
+            dma::DataSize::S8,
+            channel_cfg_write,
+        );
 
-                dma::cfg_channel(
-                    &mut regs,
-                    channel_read,
-                    periph_addr_read,
-                    ptr_read as u32,
-                    num_data_read,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg_read,
-                );
-            }
-
-            dma::DmaPeriph::Dma2 => {
-                let mut regs = unsafe { &(*pac::DMA2::ptr()) };
-                dma::cfg_channel(
-                    &mut regs,
-                    channel_write,
-                    periph_addr_write,
-                    ptr_write as u32,
-                    num_data_write,
-                    dma::Direction::ReadFromMem,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg_write,
-                );
-
-                dma::cfg_channel(
-                    &mut regs,
-                    channel_read,
-                    periph_addr_read,
-                    ptr_read as u32,
-                    num_data_read,
-                    dma::Direction::ReadFromPeriph,
-                    dma::DataSize::S8,
-                    dma::DataSize::S8,
-                    channel_cfg_read,
-                );
-            }
-        }
+        dma_periph.cfg_channel(
+            channel_read,
+            periph_addr_read,
+            ptr_read as u32,
+            num_data_read,
+            dma::Direction::ReadFromPeriph,
+            dma::DataSize::S8,
+            dma::DataSize::S8,
+            channel_cfg_read,
+        );
 
         periph.cfg1.modify(|_, w| w.txdmaen().set_bit());
 
@@ -735,19 +732,19 @@ impl<const N: usize> Spi<N> {
     /// Run this after each transfer completes - you may wish to do this in an interrupt
     /// (eg DMA transfer complete) instead of blocking. `channel2` is an optional second channel
     /// to stop; eg if you have both a tx and rx channel.
-    pub fn stop_dma(
+    pub fn stop_dma<const DMA_NUM: u8>(
         &mut self,
-        channel: DmaChannel,
-        channel2: Option<DmaChannel>,
-        dma_periph: dma::DmaPeriph,
+        channel: dma::DmaChannel,
+        channel2: Option<dma::DmaChannel>,
+        dma_periph: &dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // (RM:) To close communication it is mandatory to follow these steps in order:
         // 1. Disable DMA streams for Tx and Rx in the DMA registers, if the streams are used.
 
-        dma::stop(dma_periph, channel);
+        dma_periph.stop(channel);
         if let Some(ch2) = channel2 {
-            dma::stop(dma_periph, ch2);
+            dma_periph.stop(ch2);
         };
 
         // 2. Disable the SPI by following the SPI disable procedure:
@@ -764,19 +761,19 @@ impl<const N: usize> Spi<N> {
 
     /// Convenience function that clears the interrupt, and stops the transfer. For use with the TC
     /// interrupt only.
-    pub fn cleanup_dma(
+    pub fn cleanup_dma<const DMA_NUM: u8>(
         &mut self,
-        dma_periph: dma::DmaPeriph,
-        channel_tx: DmaChannel,
-        channel_rx: Option<DmaChannel>,
+        channel: dma::DmaChannel,
+        channel2: Option<dma::DmaChannel>,
+        dma_periph: &dma::Dma<DMA_NUM>,
     ) {
         // The hardware seems to automatically enable Tx too; and we use it when transmitting.
-        dma::clear_interrupt(dma_periph, channel_tx, dma::DmaInterrupt::TransferComplete);
+        dma_periph.clear_interrupt(channel, dma::DmaInterrupt::TransferComplete);
 
-        if let Some(ch_rx) = channel_rx {
-            dma::clear_interrupt(dma_periph, ch_rx, dma::DmaInterrupt::TransferComplete);
+        if let Some(ch_rx) = channel2 {
+            dma_periph.clear_interrupt(ch_rx, dma::DmaInterrupt::TransferComplete);
         }
 
-        self.stop_dma(channel_tx, channel_rx, dma_periph);
+        self.stop_dma(channel, channel2, dma_periph);
     }
 }
