@@ -226,7 +226,7 @@ pub struct SpiConfig {
     // pub cs_delay: f32,
     // pub swap_miso_mosi: bool,
     // pub suspend_when_inactive: bool,
-    pub band_rate: BaudRate,
+    pub baud_rate: BaudRate,
 }
 
 impl Default for SpiConfig {
@@ -237,7 +237,7 @@ impl Default for SpiConfig {
             slave_select: SlaveSelect::Software,
             data_size: DataSize::D8,
             fifo_reception_thresh: ReceptionThresh::D8,
-            band_rate: BaudRate::Div128,
+            baud_rate: BaudRate::Div128,
         }
     }
 }
@@ -257,7 +257,7 @@ impl<const N: u8> Spi<N> {
     };
     /// Initialize an SPI peripheral, including configuration register writes, and enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new<
+    pub fn init<
         const SCK_PORT: char, const SCK_PIN: u8, 
         const MISO_PORT: char, const MISO_PIN: u8, 
         const MOSI_PORT: char, const MOSI_PIN: u8
@@ -278,43 +278,44 @@ impl<const N: u8> Spi<N> {
         assert!(
             match N {
                 1 => {
-                    ((SCK_PORT == "A" && SCK_PIN == 5) || (SCK_PORT == "B" && SCK_PIN == 3) || (SCK_PORT == "G" && SCK_PIN == 11)) &&
-                    ((MISO_PORT == "A" && MISO_PIN == 6) || (MISO_PORT == "B" && MISO_PIN == 4) || (MISO_PORT == "G" && MISO_PIN == 9)) &&
-                    ((MOSI_PORT == "A" && MOSI_PIN == 7) || (MOSI_PORT == "B" && MOSI_PIN == 5) || (MOSI_PORT == "D" && MOSI_PIN == 7))
+                    ((SCK_PORT == 'A' && SCK_PIN == 5) || (SCK_PORT == 'B' && SCK_PIN == 3) || (SCK_PORT == 'G' && SCK_PIN == 11)) &&
+                    ((MISO_PORT == 'A' && MISO_PIN == 6) || (MISO_PORT == 'B' && MISO_PIN == 4) || (MISO_PORT == 'G' && MISO_PIN == 9)) &&
+                    ((MOSI_PORT == 'A' && MOSI_PIN == 7) || (MOSI_PORT == 'B' && MOSI_PIN == 5) || (MOSI_PORT == 'D' && MOSI_PIN == 7))
                 },
                 2 => {
-                    ((SCK_PORT == "A" && SCK_PIN == 9) || (SCK_PORT == "A" && SCK_PIN == 12) || (SCK_PORT == "B" && SCK_PIN == 10) ||
-                        (SCK_PORT == "B" && SCK_PIN == 13) || (SCK_PORT == "D" && SCK_PIN == 3) || (SCK_PORT == "I" && SCK_PIN == 1)) &&
-                    ((MISO_PORT == "B" && MISO_PIN == 14) || (MISO_PORT == "C" && MISO_PIN == 2) || (MISO_PORT == "I" && MISO_PIN == 2)) &&
-                    ((MOSI_PORT == "C" && MOSI_PIN == 1) || (MOSI_PORT == "C" && MOSI_PIN == 3) || (MOSI_PORT == "I" && MOSI_PIN == 3))
+                    ((SCK_PORT == 'A' && SCK_PIN == 9) || (SCK_PORT == 'A' && SCK_PIN == 12) || (SCK_PORT == 'B' && SCK_PIN == 10) ||
+                        (SCK_PORT == 'B' && SCK_PIN == 13) || (SCK_PORT == 'D' && SCK_PIN == 3) || (SCK_PORT == 'I' && SCK_PIN == 1)) &&
+                    ((MISO_PORT == 'B' && MISO_PIN == 14) || (MISO_PORT == 'C' && MISO_PIN == 2) || (MISO_PORT == 'I' && MISO_PIN == 2)) &&
+                    ((MOSI_PORT == 'C' && MOSI_PIN == 1) || (MOSI_PORT == 'C' && MOSI_PIN == 3) || (MOSI_PORT == 'I' && MOSI_PIN == 3))
                 },
                 3 => {
-                    ((SCK_PORT == "B" && SCK_PIN == 3) || (SCK_PORT == "C" && SCK_PIN == 10)) &&
-                    ((MISO_PORT == "B" && MISO_PIN == 4) || (MISO_PORT == "C" && MISO_PIN == 11)) &&
-                    ((MOSI_PORT == "B" && MOSI_PIN == 2) || (MOSI_PORT == "B" && MOSI_PIN == 5) || (MOSI_PORT == "C" && MOSI_PIN == 12) ||
-                     (MOSI_PORT == "D" && MOSI_PIN == 6))
+                    ((SCK_PORT == 'B' && SCK_PIN == 3) || (SCK_PORT == 'C' && SCK_PIN == 10)) &&
+                    ((MISO_PORT == 'B' && MISO_PIN == 4) || (MISO_PORT == 'C' && MISO_PIN == 11)) &&
+                    ((MOSI_PORT == 'B' && MOSI_PIN == 2) || (MOSI_PORT == 'B' && MOSI_PIN == 5) || (MOSI_PORT == 'C' && MOSI_PIN == 12) ||
+                     (MOSI_PORT == 'D' && MOSI_PIN == 6))
                 },
                 4 => {
-                    ((SCK_PORT == "E" && SCK_PIN == 2) || (SCK_PORT == "E" && SCK_PIN == 12)) &&
-                    ((MISO_PORT == "E" && MISO_PIN == 5) || (MISO_PORT == "E" && MISO_PIN == 13)) &&
-                    ((MOSI_PORT == "E" && MOSI_PIN == 6) || (MOSI_PORT == "E" && MOSI_PIN == 14))
+                    ((SCK_PORT == 'E' && SCK_PIN == 2) || (SCK_PORT == 'E' && SCK_PIN == 12)) &&
+                    ((MISO_PORT == 'E' && MISO_PIN == 5) || (MISO_PORT == 'E' && MISO_PIN == 13)) &&
+                    ((MOSI_PORT == 'E' && MOSI_PIN == 6) || (MOSI_PORT == 'E' && MOSI_PIN == 14))
                 },
                 5 => {
-                    ((SCK_PORT == "F" && SCK_PIN == 7) || (SCK_PORT == "H" && SCK_PIN == 6) ||
-                     (SCK_PORT == "K" && SCK_PIN == 0)) &&
-                    ((MISO_PORT == "F" && MISO_PIN == 8) || (MISO_PORT == "H" && MISO_PIN == 7) ||
-                     (MISO_PORT == "J" && MISO_PIN == 11)) &&
-                    ((MOSI_PORT == "F" && MOSI_PIN == 9) || (MOSI_PORT == "F" && MOSI_PIN == 11) ||
-                     (MOSI_PORT == "J" && MOSI_PIN == 10))
+                    ((SCK_PORT == 'F' && SCK_PIN == 7) || (SCK_PORT == 'H' && SCK_PIN == 6) ||
+                     (SCK_PORT == 'K' && SCK_PIN == 0)) &&
+                    ((MISO_PORT == 'F' && MISO_PIN == 8) || (MISO_PORT == 'H' && MISO_PIN == 7) ||
+                     (MISO_PORT == 'J' && MISO_PIN == 11)) &&
+                    ((MOSI_PORT == 'F' && MOSI_PIN == 9) || (MOSI_PORT == 'F' && MOSI_PIN == 11) ||
+                     (MOSI_PORT == 'J' && MOSI_PIN == 10))
                 },
                 6 => {
-                    ((SCK_PORT == "A" && SCK_PIN == 5) || (SCK_PORT == "B" && SCK_PIN == 3) ||
-                     (SCK_PORT == "C" && SCK_PIN == 12) || (SCK_PORT == "G" && SCK_PIN == 13)) &&
-                    ((MISO_PORT == "A" && MISO_PIN == 6) || (MISO_PORT == "B" && MISO_PIN == 4) ||
-                     (MISO_PORT == "G" && MISO_PIN == 12)) &&
-                    ((MOSI_PORT == "A" && MOSI_PIN == 7) || (MOSI_PORT == "B" && MOSI_PIN == 5) ||
-                     (MOSI_PORT == "G" && MOSI_PIN == 14))
+                    ((SCK_PORT == 'A' && SCK_PIN == 5) || (SCK_PORT == 'B' && SCK_PIN == 3) ||
+                     (SCK_PORT == 'C' && SCK_PIN == 12) || (SCK_PORT == 'G' && SCK_PIN == 13)) &&
+                    ((MISO_PORT == 'A' && MISO_PIN == 6) || (MISO_PORT == 'B' && MISO_PIN == 4) ||
+                     (MISO_PORT == 'G' && MISO_PIN == 12)) &&
+                    ((MOSI_PORT == 'A' && MOSI_PIN == 7) || (MOSI_PORT == 'B' && MOSI_PIN == 5) ||
+                     (MOSI_PORT == 'G' && MOSI_PIN == 14))
                 },
+                _ => unreachable!(),
             }
         );
         
@@ -324,7 +325,6 @@ impl<const N: u8> Spi<N> {
             3 => pac::SPI3::ptr(),
             _ => panic!("Unsupported SPI number"),
         };
-        let rcc = unsafe { &(*pac::RCC::ptr()) };
         let periph = unsafe { &(*regs_ptr)};
 
         // Enable clock for SPI
@@ -488,7 +488,7 @@ impl<const N: u8> Spi<N> {
         // Fill the first half of the write FIFO
         let len = write_words.len();
         let mut write = write_words.iter();
-        for _ in 0..core::cmp::min(FIFO_LEN, len) {
+        for _ in 0..core::cmp::min(FIFO_LEN, len as u8) {
             self.send(*write.next().unwrap());
         }
 
@@ -498,7 +498,7 @@ impl<const N: u8> Spi<N> {
         }
 
         // Dummy read from the read FIFO
-        for _ in 0..core::cmp::min(FIFO_LEN, len) {
+        for _ in 0..core::cmp::min(FIFO_LEN, len as u8) {
             let _ = self.read();
         }
 
@@ -512,20 +512,20 @@ impl<const N: u8> Spi<N> {
         }
 
         // Fill the first half of the write FIFO
-        let len = words.len();
+        let len = words.len() as u8;
         for i in 0..core::cmp::min(FIFO_LEN, len) {
-            self.send(words[i]);
+            self.send(words[i as usize]);
         }
 
         for i in FIFO_LEN..len + FIFO_LEN {
             if i < len {
                 // Continue filling write FIFO and emptying read FIFO
-                let read_value = self.exchange(words[i])?;
+                let read_value = self.exchange(words[i as usize])?;
 
-                words[i - FIFO_LEN] = read_value;
+                words[(i - FIFO_LEN) as usize] = read_value;
             } else {
                 // Finish emptying the read FIFO
-                words[i - FIFO_LEN] = self.read()?;
+                words[(i - FIFO_LEN) as usize] = self.read()?;
             }
         }
 
@@ -554,7 +554,7 @@ impl<const N: u8> Spi<N> {
         buf: &mut [u8],
         channel: dma::DmaChannel,
         channel_cfg: dma::ChannelCfg,
-        dma_periph: &dma::Dma<DMA_NUM>,
+        dma_periph: &mut dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
@@ -586,7 +586,7 @@ impl<const N: u8> Spi<N> {
         buf: &[u8],
         channel: dma::DmaChannel,
         channel_cfg: dma::ChannelCfg,
-        dma_periph: &dma::Dma<DMA_NUM>,
+        dma_periph: &mut dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // Static write and read buffers?
@@ -641,7 +641,7 @@ impl<const N: u8> Spi<N> {
         channel_read: dma::DmaChannel,
         channel_cfg_write: dma::ChannelCfg,
         channel_cfg_read: dma::ChannelCfg,
-        dma_periph: &dma::Dma<DMA_NUM>,
+        dma_periph: &mut dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // todo: Accept u16 and u32 words too.
@@ -736,7 +736,7 @@ impl<const N: u8> Spi<N> {
         &mut self,
         channel: dma::DmaChannel,
         channel2: Option<dma::DmaChannel>,
-        dma_periph: &dma::Dma<DMA_NUM>,
+        dma_periph: &mut dma::Dma<DMA_NUM>,
     ) {
         let periph = unsafe { &(*self.regs_ptr)};
         // (RM:) To close communication it is mandatory to follow these steps in order:
@@ -765,7 +765,7 @@ impl<const N: u8> Spi<N> {
         &mut self,
         channel: dma::DmaChannel,
         channel2: Option<dma::DmaChannel>,
-        dma_periph: &dma::Dma<DMA_NUM>,
+        dma_periph: &mut dma::Dma<DMA_NUM>,
     ) {
         // The hardware seems to automatically enable Tx too; and we use it when transmitting.
         dma_periph.clear_interrupt(channel, dma::DmaInterrupt::TransferComplete);

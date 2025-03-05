@@ -10,17 +10,33 @@ exclude = [".gitignore"]
 cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
 stm32h7 = { version = "^0.15.1" }
 fugit = "0.3.5"
-smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"]}
+
+smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"], optional = true }
+fdcan = { version = "0.2", optional = true }
+sdio-host = { version = "0.9", optional = true }
+synopsys-usb-otg = { version = "0.4", features = ["cortex-m"], optional = true }
 
 [features]
 h7rt = ["stm32h7/rt"]
+revision_v = []
 
 # [H7](https://docs.rs/crate/stm32h7/latest/source/Cargo.toml)
-h735 = ["stm32h7/stm32h735"]
+# For rm0433 series
+h742 = ["stm32h7/stm32h743"]
 h743 = ["stm32h7/stm32h743"]
-h743v = ["stm32h7/stm32h743v"]
-h747cm4 = ["stm32h7/stm32h747cm4"]
-h747cm7 = ["stm32h7/stm32h747cm7"]
 h753 = ["stm32h7/stm32h753"]
-h753v = ["stm32h7/stm32h753v"]
-h7b3 = ["stm32h7/stm32h7b3"]
+h750 = ["stm32h7/stm32h743"]
+h742v = ["stm32h7/stm32h743v", "revision_v"]
+h743v = ["stm32h7/stm32h743v", "revision_v"]
+h753v = ["stm32h7/stm32h753v", "revision_v"]
+h750v = ["stm32h7/stm32h743v", "revision_v"]
+# TODO: dualcore model
+
+smps = []
+xspi = []
+sdmmc = ["sdio-host"]
+# sdmmc-fatfs = ["embedded-sdmmc", "sdmmc"]
+ethernet = ["smoltcp"]
+can = ["fdcan/fdcan_h7"]
+crc = []
+usb_hs = ["synopsys-usb-otg", "synopsys-usb-otg/hs"]

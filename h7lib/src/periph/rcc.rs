@@ -6,330 +6,48 @@ use crate::pac::rcc::pllckselr::PLLSRC_A as PLLSRC;
 use crate::pac::rcc::d1cfgr::HPRE_A as HPRE;
 use crate::pac::rcc::d1ccipr::CKPERSEL_A as CKPERSEL;
 
-mod pll {
-    mod constants {
-        pub const FRACN_DIVISOR: f32 = 8192.0; // 2 ** 13
-        pub const FRACN_MAX: f32 = 8192.0 - 1.0;
-    }
+use super::pwr;
 
-    /// Strategies for configuring a Phase Locked Loop (PLL)
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum PllConfigStrategy {
-        /// VCOL, highest PFD frequency, highest VCO frequency
-        Normal,
-        /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
-        Iterative,
-        /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
-        /// Uses fractional mode to precisely set the P clock
-        Fractional,
-        /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
-        /// Uses fractional mode to precisely set the P clock not less than target frequency
-        FractionalNotLess,
-    }
-
-    /// Configuration of a Phase Locked Loop (PLL)
-    pub struct PllConfig {
-        pub(super) strategy: PllConfigStrategy,
-        pub(super) p_ck: Option<u32>,
-        pub(super) q_ck: Option<u32>,
-        pub(super) r_ck: Option<u32>,
-    }
-    impl Default for PllConfig {
-        fn default() -> PllConfig {
-            PllConfig {
-                strategy: PllConfigStrategy::Normal,
-                p_ck: None,
-                q_ck: None,
-                r_ck: None,
-            }
-        }
-    }
-
-    fn vco_setup(
-        strategy: PllConfigStrategy,
-        pllsrc: u32,
-        output: u32,
-        rcc: &mut Rcc,
-        pllXvcosel: fn(&mut Pllcfgr) -> &mut Pllcfgr,
-        pllXrge: fn(&mut Pllcfgr) -> &mut Pllcfgr,
-        pll1_p: Option<&mut u32>,
-    ) -> (u32, u32, u32, u32) {
-        let (vco_min, vco_max) = match strategy {
-            PllConfigStrategy::Normal => (150_000_000, 420_000_000),
-            PllConfigStrategy::Iterative => {
-                #[cfg(all(any(feature = "rm0433", feature = "rm0399"), not(feature = "revision_v")))]
-                let vco_limits = (192_000_000, 836_000_000);
-                #[cfg(all(any(feature = "rm0433", feature = "rm0399"), feature = "revision_v"))]
-                let vco_limits = (192_000_000, 960_000_000);
-                #[cfg(feature = "rm0455")]
-                let vco_limits = (128_000_000, 560_000_000);
-                #[cfg(feature = "rm0468")]
-                let vco_limits = (192_000_000, 836_000_000);
-                vco_limits
-            }
-        };
-
-        let mut pll1_p_val = 0;
-
-        let (vco_ck_target, pll_x_p) = {
-            let pll_x_p = if let Some(pll1_p) = Some(&mut pll1_p_val) {
-                if output > vco_max / 2 {
-                    *pll1_p = 1;
-                } else {
-                    *pll1_p = ((vco_max / output) | 1) - 1; // 偶数または1でなければならない
-                }
-                *pll1_p
-            } else {
-                if output > vco_max / 2 {
-                    1
-                } else {
-                    vco_max / output
-                }
-            };
-        
-            let vco_ck = output * pll_x_p;
-        
-            assert!(pll_x_p <= 128, "Cannot achieve output frequency this low: Maximum PLL divider is 128");
-            assert!(vco_ck >= vco_min);
-            assert!(vco_ck <= vco_max);
-        
-            (vco_ck, pll_x_p)
-        };
-
-        let pll_x_m = match strategy {
-            PllConfigStrategy::Normal => (pllsrc + 1_999_999) / 2_000_000,
-            PllConfigStrategy::Iterative => {
-                let pll_x_m_min = (pllsrc + 15_999_999) / 16_000_000;
-                let pll_x_m_max = if pllsrc <= 127_999_999 { pllsrc / 2_000_000 } else { 63 };
-                (pll_x_m_min..=pll_x_m_max).min_by_key(|&pll_x_m| {
-                    let ref_x_ck = pllsrc / pll_x_m;
-                    let pll_x_n = vco_ck_target / ref_x_ck;
-                    (vco_ck_target as i32 - (ref_x_ck * pll_x_n) as i32).abs()
-                }).unwrap()
-            }
-        };
-
-        assert!(pll_x_m < 64);
-        let ref_x_ck = pllsrc / pll_x_m;
-        assert!((if strategy == PllConfigStrategy::Normal { 1_000_000 } else { 2_000_000 })..=
-                (if strategy == PllConfigStrategy::Normal { 2_000_000 } else { 16_000_000 })
-                .contains(&ref_x_ck));
-
-        rcc.pllcfgr.modify(|_, w| {
-            pllXvcosel(w).medium_vco();
-            pllXrge(w).range1();
-            w
-        });
-
-        if strategy == PllConfigStrategy::Iterative {
-            rcc.pllcfgr.modify(|_, w| {
-                match ref_x_ck {
-                    2_000_000..=3_999_999 => pllXrge(w).range2(),
-                    4_000_000..=7_999_999 => pllXrge(w).range4(),
-                    _ => pllXrge(w).range8(),
-                }
-            });
-        }
-
-        (ref_x_ck, pll_x_m, pll_x_p, vco_ck_target)
-    }
-
-    /// PLL 設定のジェネリック関数
-    /// - `ID`: PLLの識別子 (例: 1, 2, 3)
-    /// - `VCOSEL`, `RGE`, `FRACEN`: VCO設定用のレジスタフィールド
-    /// - `DIVR`, `DIVN`, `DIVM`: PLL の分周設定
-    /// - `FRACR`, `FRACN`: 分数分周の設定
-    /// - `HAS_PLL1_P`: PLL1用の追加パラメータの有無
-    fn pll_setup<const ID: u8, const VCOSEL: u8, const RGE: u8, const FRACEN: u8,
-                const DIVR: u8, const DIVN: u8, const DIVM: u8, const FRACR: u8, const FRACN: u8,
-                const HAS_PLL1_P: bool>(
-        rcc: &RCC,
-        pll: &PllConfig
-    ) -> (Option<Hertz>, Option<Hertz>, Option<Hertz>) {
-        // PLLの入力クロック（HSI または HSE）
-        let pllsrc = pll.hse.unwrap_or(HSI);
-        assert!(pllsrc > 0);
-
-        if let Some(output) = pll.p_ck.or(pll.q_ck.or(pll.r_ck)) {
-            let (ref_x_ck, pll_x_m, pll_x, vco_ck_target) = if HAS_PLL1_P {
-                vco_setup(pll.strategy, pllsrc, output, rcc, VCOSEL, RGE, Some(&mut pll1_p_val))
-            } else {
-                vco_setup(pll.strategy, pllsrc, output, rcc, VCOSEL, RGE, None)
-            };
-
-            let pll_x_n = vco_ck_target / ref_x_ck;
-
-            rcc.pllckselr.modify(|_, w| w.set_bits(DIVM, pll_x_m as u8));
-            assert!((4..=512).contains(&pll_x_n));
-            rcc.set_bits(DIVR, (pll_x_n - 1) as u16);
-
-            let vco_ck = match pll.strategy {
-                PllConfigStrategy::Fractional => {
-                    let pll_x_fracn = calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
-                    rcc.set_bits(FRACR, pll_x_fracn);
-                    rcc.set_bits(FRACEN, 1);
-                    calc_vco_ck(ref_x_ck, pll_x_n, pll_x_fracn)
-                },
-                PllConfigStrategy::FractionalNotLess => {
-                    let mut pll_x_fracn = calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
-                    pll_x_fracn += 1;
-                    rcc.set_bits(FRACR, pll_x_fracn);
-                    rcc.set_bits(FRACEN, 1);
-                    calc_vco_ck(ref_x_ck, pll_x_n, pll_x_fracn)
-                },
-                _ => {
-                    rcc.set_bits(FRACEN, 0);
-                    ref_x_ck * pll_x_n
-                },
-            };
-
-            let pll_x_q = pll.q_ck.map(|ck| calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
-            let pll_x_r = pll.r_ck.map(|ck| calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
-
-            let dividers = (pll_x, pll_x_q, pll_x_r);
-
-            let p_ck = pll.p_ck.map(|_| {
-                assert!(dividers.0 <= 128);
-                rcc.set_bits(DIVN, (dividers.0 - 1) as u8);
-                rcc.enable_divider(DIVN);
-                Some(Hertz::from_raw(vco_ck / dividers.0))
-            }).flatten();
-
-            let q_ck = pll.q_ck.map(|_| {
-                assert!(dividers.1 <= 128);
-                rcc.set_bits(DIVN + 1, (dividers.1 - 1) as u8);
-                rcc.enable_divider(DIVN + 1);
-                Some(Hertz::from_raw(vco_ck / dividers.1))
-            }).flatten();
-
-            let r_ck = pll.r_ck.map(|_| {
-                assert!(dividers.2 <= 128);
-                rcc.set_bits(DIVN + 2, (dividers.2 - 1) as u8);
-                rcc.enable_divider(DIVN + 2);
-                Some(Hertz::from_raw(vco_ck / dividers.2))
-            }).flatten();
-
-            (p_ck, q_ck, r_ck)
-        } else {
-            (None, None, None)
-        }
-    }
-
-    // PLL1 の設定
-    fn pll1_setup(rcc: &RCC, pll: &PllConfig) -> (Option<Hertz>, Option<Hertz>, Option<Hertz>) {
-        pll_setup::<1, pll1vcosel, pll1rge, pll1fracen, pll1divr, divn1, divm1, pll1fracr, fracn1, true>(rcc, pll)
-    }
-
-    // PLL2 の設定
-    fn pll2_setup(rcc: &RCC, pll: &PllConfig) -> (Option<Hertz>, Option<Hertz>, Option<Hertz>) {
-        pll_setup::<2, pll2vcosel, pll2rge, pll2fracen, pll2divr, divn2, divm2, pll2fracr, fracn2, false>(rcc, pll)
-    }
-
-    // PLL3 の設定
-    fn pll3_setup(rcc: &RCC, pll: &PllConfig) -> (Option<Hertz>, Option<Hertz>, Option<Hertz>) {
-        pll_setup::<3, pll3vcosel, pll3rge, pll3fracen, pll3divr, divn3, divm3, pll3fracr, fracn3, false>(rcc, pll)
-    }
-
-
-    /// Calcuate the Fractional-N part of the divider
-    ///
-    /// ref_clk - Frequency at the PFD input
-    /// pll_n - Integer-N part of the divider
-    /// pll_p - P-divider
-    /// output - Wanted output frequency
-    fn calc_fracn(ref_clk: f32, pll_n: f32, pll_p: f32, output: f32) -> u16 {
-        // VCO output frequency = Fref1_ck x (DIVN1 + (FRACN1 / 2^13)),
-        let pll_fracn = FRACN_DIVISOR * (((output * pll_p) / ref_clk) - pll_n);
-        assert!(pll_fracn >= 0.0);
-        assert!(pll_fracn <= FRACN_MAX);
-        // Rounding down by casting gives up the lowest without going over
-        pll_fracn as u16
-    }
-
-    /// Calculates the {Q,R}-divider. Must NOT be used for the P-divider, as this
-    /// has additional restrictions on PLL1.
-    ///
-    /// vco_ck - VCO output frequency
-    /// target_ck - Target {Q,R} output frequency
-    fn calc_ck_div(
-        strategy: PllConfigStrategy,
-        vco_ck: u32,
-        target_ck: u32,
-    ) -> u32 {
-        let mut div = vco_ck.div_ceil(target_ck);
-        // If the divider takes us under the target clock, then increase it
-        if strategy == PllConfigStrategy::FractionalNotLess
-            && target_ck * div > vco_ck
-        {
-            div -= 1;
-        }
-        div
-    }
-
-    /// Calculates the VCO output frequency
-    ///
-    /// ref_clk - Frequency at the PFD input
-    /// pll_n - Integer-N part of the divider
-    /// pll_fracn - Fractional-N part of the divider
-    fn calc_vco_ck(ref_ck: u32, pll_n: u32, pll_fracn: u16) -> u32 {
-        (ref_ck as f32 * (pll_n as f32 + (pll_fracn as f32 / FRACN_DIVISOR))) as u32
-    }
-
+mod constants {
+    pub const FRACN_DIVISOR: f32 = 8192.0; // 2 ** 13
+    pub const FRACN_MAX: f32 = 8192.0 - 1.0;
+    pub const HSI: u32 = 64_000_000; // Hz
+    pub const CSI: u32 = 4_000_000; // Hz
+    pub const HSI48: u32 = 48_000_000; // Hz
+    pub const LSI: u32 = 32_000; // Hz
 }
 
-
-/// Frozen core clock frequencies
-///
-/// The existence of this value indicates that the core clock
-/// configuration can no longer be changed
-#[derive(Clone, Copy)]
-pub struct CoreClocks {
-    pub(super) hclk: Hertz,
-    pub(super) pclk1: Hertz,
-    pub(super) pclk2: Hertz,
-    pub(super) pclk3: Hertz,
-    pub(super) pclk4: Hertz,
-    pub(super) ppre1: u8,
-    pub(super) ppre2: u8,
-    pub(super) ppre3: u8,
-    pub(super) ppre4: u8,
-    pub(super) csi_ck: Option<Hertz>,
-    pub(super) hsi_ck: Option<Hertz>,
-    pub(super) hsi48_ck: Option<Hertz>,
-    pub(super) lsi_ck: Option<Hertz>,
-    pub(super) per_ck: Option<Hertz>,
-    pub(super) hse_ck: Option<Hertz>,
-    pub(super) mco1_ck: Option<Hertz>,
-    pub(super) mco2_ck: Option<Hertz>,
-    pub(super) pll1_p_ck: Option<Hertz>,
-    pub(super) pll1_q_ck: Option<Hertz>,
-    pub(super) pll1_r_ck: Option<Hertz>,
-    pub(super) pll2_p_ck: Option<Hertz>,
-    pub(super) pll2_q_ck: Option<Hertz>,
-    pub(super) pll2_r_ck: Option<Hertz>,
-    pub(super) pll3_p_ck: Option<Hertz>,
-    pub(super) pll3_q_ck: Option<Hertz>,
-    pub(super) pll3_r_ck: Option<Hertz>,
-    pub(super) timx_ker_ck: Hertz,
-    pub(super) timy_ker_ck: Hertz,
-    pub(super) sys_ck: Hertz,
-    pub(super) c_ck: Hertz,
+/// Strategies for configuring a Phase Locked Loop (PLL)
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum PllConfigStrategy {
+    /// VCOL, highest PFD frequency, highest VCO frequency
+    Normal,
+    /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
+    Iterative,
+    /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
+    /// Uses fractional mode to precisely set the P clock
+    Fractional,
+    /// VCOH, choose PFD frequency for accuracy, highest VCO frequency
+    /// Uses fractional mode to precisely set the P clock not less than target frequency
+    FractionalNotLess,
 }
 
-/// Configuration of the core clocks
-pub struct Config {
-    hse: Option<u32>,
-    bypass_hse: bool,
-    sys_ck: Option<u32>,
-    per_ck: Option<u32>,
-    rcc_hclk: Option<u32>,
-    rcc_pclk1: Option<u32>,
-    rcc_pclk2: Option<u32>,
-    rcc_pclk3: Option<u32>,
-    rcc_pclk4: Option<u32>,
-    pll1: pll::PllConfig,
-    pll2: pll::PllConfig,
-    pll3: pll::PllConfig,
+/// Configuration of a Phase Locked Loop (PLL)
+pub struct PllConfig {
+    pub(super) strategy: PllConfigStrategy,
+    pub(super) p_ck: Option<u32>,
+    pub(super) q_ck: Option<u32>,
+    pub(super) r_ck: Option<u32>,
+}
+impl Default for PllConfig {
+    fn default() -> PllConfig {
+        PllConfig {
+            strategy: PllConfigStrategy::Normal,
+            p_ck: None,
+            q_ck: None,
+            r_ck: None,
+        }
+    }
 }
 
 /// Gives the reason why the mcu was reset
@@ -364,313 +82,108 @@ pub enum ResetReason {
     },
 }
 
-/// Voltage Scale
+/// Frozen core clock frequencies
 ///
-/// Represents the voltage range feeding the CPU core. The maximum core
-/// clock frequency depends on this value.
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[repr(u8)]
-pub enum VoltageScale {
-    /// VOS 1 range VCORE 1.15V - 1.26V
-    Scale1 = 1,
-    /// VOS 2 range VCORE 1.05V - 1.15V
-    Scale2 = 2,
-    /// VOS 3 range VCORE 0.95V - 1.05V
-    Scale3 = 3,
+/// The existence of this value indicates that the core clock
+/// configuration can no longer be changed
+#[derive(Clone, Copy)]
+pub struct CoreClocks {
+    pub(super) hclk: Hertz,
+    pub(super) pclk1: Hertz,
+    pub(super) pclk2: Hertz,
+    pub(super) pclk3: Hertz,
+    pub(super) pclk4: Hertz,
+    pub(super) ppre1: u8,
+    pub(super) ppre2: u8,
+    pub(super) ppre3: u8,
+    pub(super) ppre4: u8,
+    pub(super) csi_ck: Option<Hertz>,
+    pub(super) hsi_ck: Option<Hertz>,
+    pub(super) hsi48_ck: Option<Hertz>,
+    pub(super) lsi_ck: Option<Hertz>,
+    pub(super) per_ck: Option<Hertz>,
+    pub(super) hse_ck: Option<Hertz>,
+    pub(super) pll1_p_ck: Option<Hertz>,
+    pub(super) pll1_q_ck: Option<Hertz>,
+    pub(super) pll1_r_ck: Option<Hertz>,
+    pub(super) pll2_p_ck: Option<Hertz>,
+    pub(super) pll2_q_ck: Option<Hertz>,
+    pub(super) pll2_r_ck: Option<Hertz>,
+    pub(super) pll3_p_ck: Option<Hertz>,
+    pub(super) pll3_q_ck: Option<Hertz>,
+    pub(super) pll3_r_ck: Option<Hertz>,
+    pub(super) timx_ker_ck: Hertz,
+    pub(super) timy_ker_ck: Hertz,
+    pub(super) sys_ck: Hertz,
+    pub(super) c_ck: Hertz,
+}
+
+/// Configuration of the core clocks
+pub struct Config {
+    hse: Option<u32>,
+    bypass_hse: bool,
+    sys_ck: Option<u32>,
+    per_ck: Option<u32>,
+    rcc_hclk: Option<u32>,
+    rcc_pclk1: Option<u32>,
+    rcc_pclk2: Option<u32>,
+    rcc_pclk3: Option<u32>,
+    rcc_pclk4: Option<u32>,
+    pll1: PllConfig,
+    pll2: PllConfig,
+    pll3: PllConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            hse: None,
+            bypass_hse: false,
+            sys_ck: None,
+            per_ck: None,
+            rcc_hclk: None,
+            rcc_pclk1: None,
+            rcc_pclk2: None,
+            rcc_pclk3: None,
+            rcc_pclk4: None,
+            pll1: PllConfig::default(),
+            pll2: PllConfig::default(),
+            pll3: PllConfig::default(),
+        }
+    }
 }
 
 pub struct Rcc {
-    config: Config,
-    pub(crate) rb: pac::RCC,
-}
-
-impl Rcc {
-    pub fn setup_vos(self) -> VoltageScale {
-        // NB. The lower bytes of CR3 can only be written once after
-        // POR, and must be written with a valid combination. Refer to
-        // RM0433 Rev 7 6.8.4. This is partially enforced by dropping
-        // `self` at the end of this method, but of course we cannot
-        // know what happened between the previous POR and here.
-
-        self.rb.cr3.modify(|_, w| {
-            w.scuen().set_bit().ldoen().set_bit().bypass().clear_bit()
-        });
-
-        // Validate the supply configuration. If you are stuck here, it is
-        // because the voltages on your board do not match those specified
-        // in the D3CR.VOS and CR3.SDLEVEL fields.  By default after reset
-        // VOS = Scale 3, so check that the voltage on the VCAP pins =
-        // 1.0V.
-        while self.rb.csr1.read().actvosrdy().bit_is_clear() {}
-
-        // We have now entered Run mode. See RM0433 Rev 7 Section 6.6.1
-
-        // Transition to configured voltage scale. VOS0 cannot be entered
-        // directly, instead transition to VOS1 initially and then VOS0 later
-        #[allow(unused_mut)]
-        let mut vos = match self.target_vos {
-            VoltageScale::Scale0 => VoltageScale::Scale1,
-            x => x,
-        };
-        d3cr!(self.rb).write(|w| unsafe {
-            // Manually set field values for each family
-            w.vos().bits(vos)
-        });
-        while d3cr!(self.rb).read().vosrdy().bit_is_clear() {}
-
-        vos
-    }
-
-    /// Gets and clears the reason of why the mcu was reset
-    pub fn get_reset_reason(rcc: &mut crate::stm32::RCC) -> ResetReason {
-        let reset_reason = rcc.rsr.read();
-    
-        // Clear the register
-        rcc.rsr.modify(|_, w| w.rmvf().clear());
-    
-        #[cfg(not(feature = "rm0455"))]
-        // See R0433 Rev 7 Section 8.4.4 Reset source identification
-        match (
-            reset_reason.lpwrrstf().is_reset_occourred(),
-            reset_reason.wwdg1rstf().is_reset_occourred(),
-            reset_reason.iwdg1rstf().is_reset_occourred(),
-            reset_reason.sftrstf().is_reset_occourred(),
-            reset_reason.porrstf().is_reset_occourred(),
-            reset_reason.pinrstf().is_reset_occourred(),
-            reset_reason.borrstf().is_reset_occourred(),
-            reset_reason.d2rstf().is_reset_occourred(),
-            reset_reason.d1rstf().is_reset_occourred(),
-            reset_reason.cpurstf().is_reset_occourred(),
-        ) {
-            (false, false, false, false, true, true, true, true, true, true) => {
-                ResetReason::PowerOnReset
-            }
-            (false, false, false, false, false, true, false, false, false, true) => {
-                ResetReason::PinReset
-            }
-            (false, false, false, false, false, true, true, false, false, true) => {
-                ResetReason::BrownoutReset
-            }
-            (false, false, false, true, false, true, false, false, false, true) => {
-                ResetReason::SystemReset
-            }
-            (false, false, false, false, false, false, false, false, false, true) => {
-                ResetReason::CpuReset
-            }
-            (false, true, false, false, false, false, false, false, false, false) | (false, true, false, false, false, true, false, false, false, true) => {
-                ResetReason::WindowWatchdogReset
-            }
-            (false, false, true, false, false, true, false, false, false, true) => {
-                ResetReason::IndependentWatchdogReset
-            }
-            (false, true, true, false, false, true, false, false, false, true) => {
-                ResetReason::GenericWatchdogReset
-            }
-            (false, false, false, false, false, false, false, false, true, false) => {
-                ResetReason::D1ExitsDStandbyMode
-            }
-            (false, false, false, false, false, false, false, true, false, false) => {
-                ResetReason::D2ExitsDStandbyMode
-            }
-            (true, false, false, false, false, true, false, false, false, true) => {
-                ResetReason::D1EntersDStandbyErroneouslyOrCpuEntersCStopErroneously
-            }
-            _ => ResetReason::Unknown {
-                rcc_rsr: reset_reason.bits(),
-            },
-        }
-    }
-}
-
-/// Core Clock Distribution and Reset (CCDR)
-///
-/// Generated when the RCC is frozen. The configuration of the Sys_Ck
-/// `sys_ck`, CPU Clock `c_ck`, AXI peripheral clock `aclk`, AHB
-/// clocks `hclk`, APB clocks `pclkN` and PLL outputs `pllN_X_ck` are
-/// frozen. However the distribution of some clocks may still be
-/// modified and peripherals enabled / reset by passing this object
-/// to other implementations in this stack.
-pub struct Ccdr {
-    /// A record of the frozen core clock frequencies
     pub clocks: CoreClocks,
-
-    /// Peripheral reset / enable / kernel clock control
-    pub peripheral: PeripheralREC,
-
-    // Yes, it lives (locally)! We retain the right to switch most
-    // PKSUs on the fly, to fine-tune PLL frequencies, and to enable /
-    // reset peripherals.
-    //
-    // TODO: Remove this once all permitted RCC register accesses
-    // after freeze are enumerated in this struct
-    pub(crate) rb: pac::RCC,
-}
-
-mod constants {
-    pub const HSI: u32 = 64_000_000; // Hz
-    pub const CSI: u32 = 4_000_000; // Hz
-    pub const HSI48: u32 = 48_000_000; // Hz
-    pub const LSI: u32 = 32_000; // Hz
 }
 
 impl Rcc {
-    fn flash_setup(rcc_aclk: u32, vos: Voltage) {
-        use crate::stm32::FLASH;
-        // ACLK in MHz, round down and subtract 1 from integers. eg.
-        // 61_999_999 -> 61MHz
-        // 62_000_000 -> 61MHz
-        // 62_000_001 -> 62MHz
-        let rcc_aclk_mhz = (rcc_aclk - 1) / 1_000_000;
-
-        // See RM0433 Rev 7 Table 17. FLASH recommended number of wait
-        // states and programming delay
-        let (wait_states, progr_delay) = match vos {
-            // VOS 0 range VCORE 1.26V - 1.40V
-            Voltage::Scale0 => match rcc_aclk_mhz {
-                0..=69 => (0, 0),
-                70..=139 => (1, 1),
-                140..=184 => (2, 1),
-                185..=209 => (2, 2),
-                210..=224 => (3, 2),
-                225..=239 => (4, 2),
-                _ => (7, 3),
-            },
-            // VOS 1 range VCORE 1.15V - 1.26V
-            Voltage::Scale1 => match rcc_aclk_mhz {
-                0..=69 => (0, 0),
-                70..=139 => (1, 1),
-                140..=184 => (2, 1),
-                185..=209 => (2, 2),
-                210..=224 => (3, 2),
-                _ => (7, 3),
-            },
-            // VOS 2 range VCORE 1.05V - 1.15V
-            Voltage::Scale2 => match rcc_aclk_mhz {
-                0..=54 => (0, 0),
-                55..=109 => (1, 1),
-                110..=164 => (2, 1),
-                165..=224 => (3, 2),
-                _ => (7, 3),
-            },
-            // VOS 3 range VCORE 0.95V - 1.05V
-            Voltage::Scale3 => match rcc_aclk_mhz {
-                0..=44 => (0, 0),
-                45..=89 => (1, 1),
-                90..=134 => (2, 1),
-                135..=179 => (3, 2),
-                180..=224 => (4, 2),
-                _ => (7, 3),
-            },
-        };
-
-        let flash = unsafe { &(*FLASH::ptr()) };
-        // Adjust flash wait states
-        flash.acr.write(|w| unsafe {
-            w.wrhighfreq().bits(progr_delay).latency().bits(wait_states)
-        });
-        while flash.acr.read().latency().bits() != wait_states {}
-    }
-
-    /// Setup sys_ck
-    /// Returns sys_ck frequency, and a pll1_p_ck
-    fn sys_ck_setup(&mut self) -> (Hertz, bool) {
-        // Compare available with wanted clocks
-        let srcclk = self.config.hse.unwrap_or(HSI); // Available clocks
-        let sys_ck = self.config.sys_ck.unwrap_or(srcclk);
-
-        if sys_ck != srcclk {
-            // The requested system clock is not the immediately available
-            // HSE/HSI clock. Perhaps there are other ways of obtaining
-            // the requested system clock (such as `HSIDIV`) but we will
-            // ignore those for now.
-            //
-            // Therefore we must use pll1_p_ck
-            let pll1_p_ck = match self.config.pll1.p_ck {
-                Some(p_ck) => {
-                    assert!(p_ck == sys_ck,
-                            "Error: Cannot set pll1_p_ck independently as it must be used to generate sys_ck");
-                    Some(p_ck)
-                }
-                None => Some(sys_ck),
-            };
-            self.config.pll1.p_ck = pll1_p_ck;
-
-            (Hertz::from_raw(sys_ck), true)
-        } else {
-            // sys_ck is derived directly from a source clock
-            // (HSE/HSI). pll1_p_ck can be as requested
-            (Hertz::from_raw(sys_ck), false)
-        }
-    }
-
-    /// Setup traceclk
-    /// Returns a pll1_r_ck
-    fn traceclk_setup(&mut self, sys_use_pll1_p: bool) {
-        let pll1_r_ck = match (sys_use_pll1_p, self.config.pll1.r_ck) {
-            // pll1_p_ck selected as system clock but pll1_r_ck not
-            // set. The traceclk mux is synchronous with the system
-            // clock mux, but has pll1_r_ck as an input. In order to
-            // keep traceclk running, we force a pll1_r_ck.
-            (true, None) => Some(self.config.pll1.p_ck.unwrap() / 2),
-            // Either pll1 not selected as system clock, free choice
-            // of pll1_r_ck. Or pll1 is selected, assume user has set
-            // a suitable pll1_r_ck frequency.
-            _ => self.config.pll1.r_ck,
-        };
-        self.config.pll1.r_ck = pll1_r_ck;
-    }
-
-    /// Freeze the core clocks, returning a Core Clocks Distribution
-    /// and Reset (CCDR) structure. The actual frequency of the clocks
-    /// configured is returned in the `clocks` member of the CCDR
-    /// structure.
-    ///
-    /// Note that `freeze` will never result in a clock _faster_ than
-    /// that specified. It may result in a clock that is a factor of [1,
-    /// 2) slower.
-    ///
-    /// `syscfg` is required to enable the I/O compensation cell.
-    ///
-    /// # Panics
-    ///
-    /// If a clock specification cannot be achieved within the
-    /// hardware specification then this function will panic. This
-    /// function may also panic if a clock specification can be
-    /// achieved, but the mechanism for doing so is not yet
-    /// implemented here.
-    pub fn freeze(
-        mut self,
-        pwrcfg: PowerConfiguration,
-        syscfg: &SYSCFG,
-    ) -> Ccdr {
+    pub fn init(power: pwr::Power, mut config: Config) -> Self
+    {
         // We do not reset RCC here. This routine must assert when
         // the previous state of the RCC peripheral is unacceptable.
 
         // config modifications ----------------------------------------
         // (required for self-consistency and usability)
 
-        // if needed for mco, set sys_ck / pll1_p / pll1_q / pll2_p
-        self.mco1_setup();
-        self.mco2_setup();
-
         // sys_ck from PLL if needed, else HSE or HSI
-        let (sys_ck, sys_use_pll1_p) = self.sys_ck_setup();
+        let (sys_ck, sys_use_pll1_p) = Self::sys_ck_setup(&mut config);
 
         // Configure traceclk from PLL if needed
-        self.traceclk_setup(sys_use_pll1_p);
+        Self::traceclk_setup(&mut config, sys_use_pll1_p);
 
         // self is now immutable ----------------------------------------
-        let rcc = &self.rb;
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
 
         // Configure PLL1
         let (pll1_p_ck, pll1_q_ck, pll1_r_ck) =
-            self.pll1_setup(rcc, &self.config.pll1);
+            Self::pll_setup::<1>(&mut config);
         // Configure PLL2
         let (pll2_p_ck, pll2_q_ck, pll2_r_ck) =
-            self.pll2_setup(rcc, &self.config.pll2);
+            Self::pll_setup::<2>(&mut config);
         // Configure PLL3
         let (pll3_p_ck, pll3_q_ck, pll3_r_ck) =
-            self.pll3_setup(rcc, &self.config.pll3);
+            Self::pll_setup::<3>(&mut config);
 
         let sys_ck = if sys_use_pll1_p {
             pll1_p_ck.unwrap() // Must have been set by sys_ck_setup
@@ -681,23 +194,23 @@ impl Rcc {
         // hsi_ck = HSI. This routine does not support HSIDIV != 1. To
         // do so it would need to ensure all PLLxON bits are clear
         // before changing the value of HSIDIV
-        let hsi = HSI;
+        let hsi = constants::HSI;
         assert!(rcc.cr.read().hsion().is_on(), "HSI oscillator must be on!");
         assert!(rcc.cr.read().hsidiv().is_div1());
 
-        let csi = CSI;
-        let hsi48 = HSI48;
+        let csi = constants::CSI;
+        let hsi48 = constants::HSI48;
 
         // Enable LSI for RTC, IWDG, AWU, or MCO2
-        let lsi = LSI;
+        let lsi = constants::LSI;
         rcc.csr.modify(|_, w| w.lsion().on());
         while rcc.csr.read().lsirdy().is_not_ready() {}
 
         // per_ck from HSI by default
         let (per_ck, ckpersel) =
-            match (self.config.per_ck == self.config.hse, self.config.per_ck) {
+            match (config.per_ck == config.hse, config.per_ck) {
                 (true, Some(hse)) => (hse, CKPERSEL::Hse), // HSE
-                (_, Some(CSI)) => (csi, CKPERSEL::Csi),    // CSI
+                (_, Some(csi)) => (csi, CKPERSEL::Csi),    // CSI
                 _ => (hsi, CKPERSEL::Hsi),                 // HSI
             };
 
@@ -713,10 +226,10 @@ impl Rcc {
         // Refer to part datasheet "General operating conditions"
         // table for (rev V). We do not assert checks for earlier
         // revisions which may have lower limits.
-        let (sys_d1cpre_ck_max, rcc_hclk_max, pclk_max) = match pwrcfg.vos {
-            Voltage::Scale0 => (480_000_000, 240_000_000, 120_000_000),
-            Voltage::Scale1 => (400_000_000, 200_000_000, 100_000_000),
-            Voltage::Scale2 => (300_000_000, 150_000_000, 75_000_000),
+        let (sys_d1cpre_ck_max, rcc_hclk_max, pclk_max) = match power.vos {
+            pwr::VoltageScale::Scale0 => (480_000_000, 240_000_000, 120_000_000),
+            pwr::VoltageScale::Scale1 => (400_000_000, 200_000_000, 100_000_000),
+            pwr::VoltageScale::Scale2 => (300_000_000, 150_000_000, 75_000_000),
             _ => (200_000_000, 100_000_000, 50_000_000),
         };
 
@@ -724,7 +237,7 @@ impl Rcc {
         assert!(sys_d1cpre_ck <= sys_d1cpre_ck_max);
 
         // Get AHB clock or sensible default
-        let rcc_hclk = self.config.rcc_hclk.unwrap_or(sys_d1cpre_ck / 2);
+        let rcc_hclk = config.rcc_hclk.unwrap_or(sys_d1cpre_ck / 2);
 
         assert!(rcc_hclk <= rcc_hclk_max);
 
@@ -749,7 +262,7 @@ impl Rcc {
 
         // Calculate ppreN dividers and real rcc_pclkN frequencies
         // Get intended rcc_pclk1 frequency
-            let rcc_pclk1: u32 = self.config
+            let rcc_pclk1: u32 = config
             .rcc_pclk1
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
@@ -779,7 +292,7 @@ impl Rcc {
             };
 
             // Get intended rcc_pclk2 frequency
-            let rcc_pclk2: u32 = self.config
+            let rcc_pclk2: u32 = config
             .rcc_pclk2
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
@@ -809,7 +322,7 @@ impl Rcc {
             };
 
             // Get intended rcc_pclk3 frequency
-            let rcc_pclk3: u32 = self.config
+            let rcc_pclk3: u32 = config
             .rcc_pclk3
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
@@ -830,7 +343,7 @@ impl Rcc {
             assert!(rcc_pclk3 <= pclk_max);
 
             // Get intended rcc_pclk4 frequency
-            let rcc_pclk4: u32 = self.config
+            let rcc_pclk4: u32 = config
             .rcc_pclk4
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
@@ -851,10 +364,10 @@ impl Rcc {
             assert!(rcc_pclk4 <= pclk_max);
 
         // Start switching clocks here! ----------------------------------------
-
+        
         // Flash setup
-        Self::flash_setup(rcc_aclk, pwrcfg.vos);
-
+        Self::flash_setup(rcc_aclk, power.vos);
+        
         // Ensure CSI is on and stable
         rcc.cr.modify(|_, w| w.csion().on());
         while rcc.cr.read().csirdy().is_not_ready() {}
@@ -864,11 +377,11 @@ impl Rcc {
         while rcc.cr.read().hsi48rdy().is_not_ready() {}
 
         // HSE
-        let hse_ck = match self.config.hse {
+        let hse_ck = match config.hse {
             Some(hse) => {
                 // Ensure HSE is on and stable
                 rcc.cr.modify(|_, w| {
-                    w.hseon().on().hsebyp().bit(self.config.bypass_hse)
+                    w.hseon().on().hsebyp().bit(config.bypass_hse)
                 });
                 while rcc.cr.read().hserdy().is_not_ready() {}
 
@@ -878,7 +391,7 @@ impl Rcc {
         };
 
         // PLL
-        let pllsrc = if self.config.hse.is_some() {
+        let pllsrc = if config.hse.is_some() {
             PLLSRC::Hse
         } else {
             PLLSRC::Hsi
@@ -940,7 +453,7 @@ impl Rcc {
         rcc.cfgr.modify(|_, w| w.timpre().variant(timpre));
 
         // Select system clock source
-        let swbits = match (sys_use_pll1_p, self.config.hse.is_some()) {
+        let swbits = match (sys_use_pll1_p, config.hse.is_some()) {
             (true, _) => SW::Pll1 as u8,
             (false, true) => SW::Hse as u8,
             _ => SW::Hsi as u8,
@@ -954,13 +467,14 @@ impl Rcc {
 
         // Enable the compensation cell, using back-bias voltage code
         // provide by the cell.
+        let syscfg = unsafe {&(*pac::SYSCFG::ptr())};
         syscfg.cccsr.modify(|_, w| {
             w.en().set_bit().cs().clear_bit().hslv().clear_bit()
         });
         while syscfg.cccsr.read().ready().bit_is_clear() {}
 
         // Return frozen clock configuration
-        Ccdr {
+        Self {
             clocks: CoreClocks {
                 hclk: Hertz::from_raw(rcc_hclk),
                 pclk1: Hertz::from_raw(rcc_pclk1),
@@ -991,12 +505,502 @@ impl Rcc {
                 sys_ck,
                 c_ck: Hertz::from_raw(sys_d1cpre_ck),
             },
-            peripheral: unsafe {
-                // unsafe: we consume self which was a singleton, hence
-                // we can safely create a singleton here
-                PeripheralREC::new_singleton()
-            },
-            rb: self.rb,
         }
+    }
+
+    fn vco_setup<const PLL: u8>(
+        strategy: PllConfigStrategy,
+        pllsrc: u32,
+        output: u32,
+    ) -> (u32, u32, u32, u32)
+    {
+        assert!(1 <= PLL && PLL <= 3, "PLL must be 1 - 3.");
+
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
+        let (vco_min, vco_max) = match strategy {
+            PllConfigStrategy::Normal => (150_000_000, 420_000_000),
+            _ => {
+                #[cfg(not(feature = "revision_v"))]
+                let vco_limits = (192_000_000, 836_000_000);
+                #[cfg(feature = "revision_v")]
+                let vco_limits = (192_000_000, 960_000_000);
+                vco_limits
+            }
+        };
+    
+        let (vco_ck_target, pll_x_p) = {
+            let pll_x_p = match PLL {
+                1 => {
+                    if output > vco_max / 2 {
+                        1
+                    } else {
+                        ((vco_max / output) | 1) - 1 // 偶数または1でなければならない
+                    }
+                }
+                _ => {
+                    if output > vco_max / 2 {
+                        1
+                    } else {
+                        vco_max / output
+                    }
+                }
+            };
+        
+            let vco_ck = output * pll_x_p;
+        
+            assert!(pll_x_p <= 128, "Cannot achieve output frequency this low: Maximum PLL divider is 128");
+            assert!(vco_ck >= vco_min);
+            assert!(vco_ck <= vco_max);
+        
+            (vco_ck, pll_x_p)
+        };
+    
+        let pll_x_m = match strategy {
+            PllConfigStrategy::Normal => (pllsrc + 1_999_999) / 2_000_000,
+            _ => {
+                let pll_x_m_min = (pllsrc + 15_999_999) / 16_000_000;
+                let pll_x_m_max = if pllsrc <= 127_999_999 { pllsrc / 2_000_000 } else { 63 };
+                (pll_x_m_min..=pll_x_m_max).min_by_key(|&pll_x_m| {
+                    let ref_x_ck = pllsrc / pll_x_m;
+                    let pll_x_n = vco_ck_target / ref_x_ck;
+                    (vco_ck_target as i32 - (ref_x_ck * pll_x_n) as i32).abs()
+                }).unwrap()
+            }
+        };
+    
+        assert!(pll_x_m < 64);
+        let ref_x_ck = pllsrc / pll_x_m;
+    
+        match strategy {
+            PllConfigStrategy::Normal => {
+                assert!((1_000_000..=2_000_000).contains(&ref_x_ck));
+            },
+            _ => {
+                assert!((2_000_000..=16_000_000).contains(&ref_x_ck));
+            }
+        };
+    
+        match PLL {
+            1 => {
+                rcc.pllcfgr.modify(|_, w| {
+                    w.pll1vcosel().medium_vco();
+                    w.pll1rge().range1();
+                    w
+                });
+            }
+            2 => {
+                rcc.pllcfgr.modify(|_, w| {
+                    w.pll2vcosel().medium_vco();
+                    w.pll2rge().range1();
+                    w
+                });
+            }
+            3 => {
+                rcc.pllcfgr.modify(|_, w| {
+                    w.pll3vcosel().medium_vco();
+                    w.pll3rge().range1();
+                    w
+                });
+            }
+            _ => unreachable!(),
+        }
+    
+        if strategy == PllConfigStrategy::Iterative {
+            rcc.pllcfgr.modify(|_, w| {
+                match ref_x_ck {
+                    2_000_000..=3_999_999 => {
+                        match PLL {
+                            1 => w.pll1rge().range2(),
+                            2 => w.pll2rge().range2(),
+                            3 => w.pll3rge().range2(),
+                            _ => unreachable!(),
+                        }
+                    }
+                    4_000_000..=7_999_999 => {
+                        match PLL {
+                            1 => w.pll1rge().range4(),
+                            2 => w.pll2rge().range4(),
+                            3 => w.pll3rge().range4(),
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => {
+                        match PLL {
+                            1 => w.pll1rge().range8(),
+                            2 => w.pll2rge().range8(),
+                            3 => w.pll3rge().range8(),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            });
+        }
+    
+        (ref_x_ck, pll_x_m, pll_x_p, vco_ck_target)
+    }
+    
+    /// PLL 設定のジェネリック関数
+    fn pll_setup<const N: u8>(config: &mut Config) -> (Option<Hertz>, Option<Hertz>, Option<Hertz>)
+    {
+        assert!(1 <= N && N <= 3, "PLL must be 1 - 3.");
+
+        let pll = match N {
+            1 => &config.pll1,
+            2 => &config.pll2,
+            3 => &config.pll3,
+            _ => unreachable!(),
+        };
+
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
+        // PLLの入力クロック（HSI または HSE）
+        let pllsrc = config.hse.unwrap_or(constants::HSI);
+        assert!(pllsrc > 0);
+    
+        if let Some(output) = pll.p_ck.or(pll.q_ck.or(pll.r_ck)) {
+            let (ref_x_ck, pll_x_m, pll_x, vco_ck_target) = if N == 1 {
+                Self::vco_setup::<N>(pll.strategy, pllsrc, output)
+            } else {
+                Self::vco_setup::<N>(pll.strategy, pllsrc, output)
+            };
+    
+            let pll_x_n = vco_ck_target / ref_x_ck;
+            assert!((4..=512).contains(&pll_x_n));
+    
+            match N {
+                1 => {
+                    rcc.pllckselr.modify(|_, w| {w.divm1().bits(pll_x_m as u8)});
+                    rcc.pll1divr.modify(|_, w| unsafe { w.divn1().bits((pll_x_n - 1) as u16) });
+                }
+                2 => {
+                    rcc.pllckselr.modify(|_, w| {w.divm2().bits(pll_x_m as u8)});
+                    rcc.pll2divr.modify(|_, w| unsafe { w.divn2().bits((pll_x_n - 1) as u16) });
+                }
+                3 => {
+                    rcc.pllckselr.modify(|_, w| {w.divm3().bits(pll_x_m as u8)});
+                    rcc.pll3divr.modify(|_, w| unsafe { w.divn3().bits((pll_x_n - 1) as u16) });
+                }
+                _ => unreachable!(),
+            }
+            
+            let vco_ck = match pll.strategy {
+                PllConfigStrategy::Fractional => {
+                    let pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                    match N {
+                        1 => {
+                            rcc.pll1fracr.modify(|_, w| {w.fracn1().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll1fracen().set()});
+                        }
+                        2 => {
+                            rcc.pll2fracr.modify(|_, w| {w.fracn2().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll2fracen().set()});
+                        }
+                        3 => {
+                            rcc.pll3fracr.modify(|_, w| {w.fracn3().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll3fracen().set()});
+                        }
+                        _ => unreachable!(),
+                    }
+                    (ref_x_ck as f32 * (pll_x_n as f32 + (pll_x_fracn as f32 / constants::FRACN_DIVISOR))) as u32
+                },
+                PllConfigStrategy::FractionalNotLess => {
+                    let mut pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                    pll_x_fracn += 1;
+                    match N {
+                        1 => {
+                            rcc.pll1fracr.modify(|_, w| {w.fracn1().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll1fracen().set()});
+                        }
+                        2 => {
+                            rcc.pll2fracr.modify(|_, w| {w.fracn2().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll2fracen().set()});
+                        }
+                        3 => {
+                            rcc.pll3fracr.modify(|_, w| {w.fracn3().bits(pll_x_fracn)});
+                            rcc.pllcfgr.modify(|_, w| {w.pll3fracen().set()});
+                        }
+                        _ => unreachable!(),
+                    }
+                    (ref_x_ck as f32 * (pll_x_n as f32 + (pll_x_fracn as f32 / constants::FRACN_DIVISOR))) as u32
+                },
+                _ => {
+                    match N {
+                        1 => rcc.pllcfgr.modify(|_, w| {w.pll1fracen().reset()}),
+                        2 => rcc.pllcfgr.modify(|_, w| {w.pll2fracen().reset()}),
+                        3 => rcc.pllcfgr.modify(|_, w| {w.pll3fracen().reset()}),
+                        _ => unreachable!(),
+                    }
+                    ref_x_ck * pll_x_n
+                },
+            };
+    
+            let pll_x_q = pll.q_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
+            let pll_x_r = pll.r_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
+    
+            let dividers = (pll_x, pll_x_q, pll_x_r);
+    
+            let p_ck = pll.p_ck.map(|_| {
+                assert!(dividers.0 <= 128);
+                match N {
+                    1 => {
+                        rcc.pll1divr.modify(|_, w| unsafe {w.divp1().bits((dividers.0 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divp1en().enabled());
+                    }
+                    2 => {
+                        rcc.pll2divr.modify(|_, w| unsafe {w.divp2().bits((dividers.0 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divp2en().enabled());
+                    }
+                    3 => {
+                        rcc.pll3divr.modify(|_, w| unsafe {w.divp3().bits((dividers.0 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divp3en().enabled());
+                    }
+                    _ => unreachable!(),
+                }
+                Some(Hertz::from_raw(vco_ck / dividers.0))
+            }).flatten();
+    
+            let q_ck = pll.q_ck.map(|_| {
+                assert!(dividers.1 <= 128);
+                match N {
+                    1 => {
+                        rcc.pll1divr.modify(|_, w| unsafe {w.divq1().bits((dividers.1 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divq1en().enabled());
+                    }
+                    2 => {
+                        rcc.pll2divr.modify(|_, w| unsafe {w.divq2().bits((dividers.1 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divq2en().enabled());
+                    }
+                    3 => {
+                        rcc.pll3divr.modify(|_, w| unsafe {w.divq3().bits((dividers.1 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divq3en().enabled());
+                    }
+                    _ => unreachable!(),
+                }
+                Some(Hertz::from_raw(vco_ck / dividers.1))
+            }).flatten();
+    
+            let r_ck = pll.r_ck.map(|_| {
+                assert!(dividers.2 <= 128);
+                match N {
+                    1 => {
+                        rcc.pll1divr.modify(|_, w| unsafe {w.divr1().bits((dividers.2 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divr1en().enabled());
+                    }
+                    2 => {
+                        rcc.pll2divr.modify(|_, w| unsafe {w.divr2().bits((dividers.2 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divr2en().enabled());
+                    }
+                    3 => {
+                        rcc.pll3divr.modify(|_, w| unsafe {w.divr3().bits((dividers.2 - 1) as u8)});
+                        rcc.pllcfgr.modify(|_, w| w.divr3en().enabled());
+                    }
+                    _ => unreachable!(),
+                }
+                Some(Hertz::from_raw(vco_ck / dividers.2))
+            }).flatten();
+    
+            (p_ck, q_ck, r_ck)
+        } else {
+            (None, None, None)
+        }
+    }
+    
+    /// Calcuate the Fractional-N part of the divider
+    ///
+    /// ref_clk - Frequency at the PFD input
+    /// pll_n - Integer-N part of the divider
+    /// pll_p - P-divider
+    /// output - Wanted output frequency
+    fn calc_fracn(ref_clk: f32, pll_n: f32, pll_p: f32, output: f32) -> u16 {
+        // VCO output frequency = Fref1_ck x (DIVN1 + (FRACN1 / 2^13)),
+        let pll_fracn = constants::FRACN_DIVISOR * (((output * pll_p) / ref_clk) - pll_n);
+        assert!(pll_fracn >= 0.0);
+        assert!(pll_fracn <= constants::FRACN_MAX);
+        // Rounding down by casting gives up the lowest without going over
+        pll_fracn as u16
+    }
+    
+    /// Calculates the {Q,R}-divider. Must NOT be used for the P-divider, as this
+    /// has additional restrictions on PLL1.
+    ///
+    /// vco_ck - VCO output frequency
+    /// target_ck - Target {Q,R} output frequency
+    fn calc_ck_div(
+        strategy: PllConfigStrategy,
+        vco_ck: u32,
+        target_ck: u32,
+    ) -> u32 {
+        let mut div = vco_ck.div_ceil(target_ck);
+        // If the divider takes us under the target clock, then increase it
+        if strategy == PllConfigStrategy::FractionalNotLess
+            && target_ck * div > vco_ck
+        {
+            div -= 1;
+        }
+        div
+    }
+    /// Gets and clears the reason of why the mcu was reset
+    pub fn get_reset_reason() -> ResetReason {
+        let rcc = unsafe {&(*pac::RCC::ptr())};
+        let reset_reason = rcc.rsr.read();
+    
+        // Clear the register
+        rcc.rsr.modify(|_, w| w.rmvf().clear());
+    
+        // See R0433 Rev 7 Section 8.4.4 Reset source identification
+        match (
+            reset_reason.lpwrrstf().is_reset_occourred(),
+            reset_reason.wwdg1rstf().is_reset_occourred(),
+            reset_reason.iwdg1rstf().is_reset_occourred(),
+            reset_reason.sftrstf().is_reset_occourred(),
+            reset_reason.porrstf().is_reset_occourred(),
+            reset_reason.pinrstf().is_reset_occourred(),
+            reset_reason.borrstf().is_reset_occourred(),
+            reset_reason.d2rstf().is_reset_occourred(),
+            reset_reason.d1rstf().is_reset_occourred(),
+            reset_reason.cpurstf().is_reset_occourred(),
+        ) {
+            (false, false, false, false, true, true, true, true, true, true) => {
+                ResetReason::PowerOnReset
+            }
+            (false, false, false, false, false, true, false, false, false, true) => {
+                ResetReason::PinReset
+            }
+            (false, false, false, false, false, true, true, false, false, true) => {
+                ResetReason::BrownoutReset
+            }
+            (false, false, false, true, false, true, false, false, false, true) => {
+                ResetReason::SystemReset
+            }
+            (false, false, false, false, false, false, false, false, false, true) => {
+                ResetReason::CpuReset
+            }
+            (false, true, false, false, false, false, false, false, false, false) | (false, true, false, false, false, true, false, false, false, true) => {
+                ResetReason::WindowWatchdogReset
+            }
+            (false, false, true, false, false, true, false, false, false, true) => {
+                ResetReason::IndependentWatchdogReset
+            }
+            (false, true, true, false, false, true, false, false, false, true) => {
+                ResetReason::GenericWatchdogReset
+            }
+            (false, false, false, false, false, false, false, false, true, false) => {
+                ResetReason::D1ExitsDStandbyMode
+            }
+            (false, false, false, false, false, false, false, true, false, false) => {
+                ResetReason::D2ExitsDStandbyMode
+            }
+            (true, false, false, false, false, true, false, false, false, true) => {
+                ResetReason::D1EntersDStandbyErroneouslyOrCpuEntersCStopErroneously
+            }
+            _ => ResetReason::Unknown {
+                rcc_rsr: reset_reason.bits(),
+            },
+        }
+    }
+
+    fn flash_setup(rcc_aclk: u32, vos: pwr::VoltageScale) {
+        use crate::pac::FLASH;
+        // ACLK in MHz, round down and subtract 1 from integers. eg.
+        // 61_999_999 -> 61MHz
+        // 62_000_000 -> 61MHz
+        // 62_000_001 -> 62MHz
+        let rcc_aclk_mhz = (rcc_aclk - 1) / 1_000_000;
+
+        // See RM0433 Rev 7 Table 17. FLASH recommended number of wait
+        // states and programming delay
+        let (wait_states, progr_delay) = match vos {
+            // VOS 0 range VCORE 1.26V - 1.40V
+            pwr::VoltageScale::Scale0 => match rcc_aclk_mhz {
+                0..=69 => (0, 0),
+                70..=139 => (1, 1),
+                140..=184 => (2, 1),
+                185..=209 => (2, 2),
+                210..=224 => (3, 2),
+                225..=239 => (4, 2),
+                _ => (7, 3),
+            },
+            // VOS 1 range VCORE 1.15V - 1.26V
+            pwr::VoltageScale::Scale1 => match rcc_aclk_mhz {
+                0..=69 => (0, 0),
+                70..=139 => (1, 1),
+                140..=184 => (2, 1),
+                185..=209 => (2, 2),
+                210..=224 => (3, 2),
+                _ => (7, 3),
+            },
+            // VOS 2 range VCORE 1.05V - 1.15V
+            pwr::VoltageScale::Scale2 => match rcc_aclk_mhz {
+                0..=54 => (0, 0),
+                55..=109 => (1, 1),
+                110..=164 => (2, 1),
+                165..=224 => (3, 2),
+                _ => (7, 3),
+            },
+            // VOS 3 range VCORE 0.95V - 1.05V
+            pwr::VoltageScale::Scale3 => match rcc_aclk_mhz {
+                0..=44 => (0, 0),
+                45..=89 => (1, 1),
+                90..=134 => (2, 1),
+                135..=179 => (3, 2),
+                180..=224 => (4, 2),
+                _ => (7, 3),
+            },
+        };
+
+        let flash = unsafe { &(*FLASH::ptr()) };
+        // Adjust flash wait states
+        flash.acr.write(|w| unsafe {
+            w.wrhighfreq().bits(progr_delay).latency().bits(wait_states)
+        });
+        while flash.acr.read().latency().bits() != wait_states {}
+    }
+
+    /// Setup sys_ck
+    /// Returns sys_ck frequency, and a pll1_p_ck
+    fn sys_ck_setup(config: &mut Config) -> (Hertz, bool) {
+        // Compare available with wanted clocks
+        let srcclk = config.hse.unwrap_or(constants::HSI); // Available clocks
+        let sys_ck = config.sys_ck.unwrap_or(srcclk);
+
+        if sys_ck != srcclk {
+            // The requested system clock is not the immediately available
+            // HSE/HSI clock. Perhaps there are other ways of obtaining
+            // the requested system clock (such as `HSIDIV`) but we will
+            // ignore those for now.
+            //
+            // Therefore we must use pll1_p_ck
+            let pll1_p_ck = match config.pll1.p_ck {
+                Some(p_ck) => {
+                    assert!(p_ck == sys_ck,
+                            "Error: Cannot set pll1_p_ck independently as it must be used to generate sys_ck");
+                    Some(p_ck)
+                }
+                None => Some(sys_ck),
+            };
+            config.pll1.p_ck = pll1_p_ck;
+
+            (Hertz::from_raw(sys_ck), true)
+        } else {
+            // sys_ck is derived directly from a source clock
+            // (HSE/HSI). pll1_p_ck can be as requested
+            (Hertz::from_raw(sys_ck), false)
+        }
+    }
+
+    /// Setup traceclk
+    /// Returns a pll1_r_ck
+    fn traceclk_setup(config: &mut Config, sys_use_pll1_p: bool) {
+        let pll1_r_ck = match (sys_use_pll1_p, config.pll1.r_ck) {
+            // pll1_p_ck selected as system clock but pll1_r_ck not
+            // set. The traceclk mux is synchronous with the system
+            // clock mux, but has pll1_r_ck as an input. In order to
+            // keep traceclk running, we force a pll1_r_ck.
+            (true, None) => Some(config.pll1.p_ck.unwrap() / 2),
+            // Either pll1 not selected as system clock, free choice
+            // of pll1_r_ck. Or pll1 is selected, assume user has set
+            // a suitable pll1_r_ck frequency.
+            _ => config.pll1.r_ck,
+        };
+        config.pll1.r_ck = pll1_r_ck;
     }
 }

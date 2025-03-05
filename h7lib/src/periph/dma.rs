@@ -15,11 +15,7 @@
 
 use core::sync::atomic::{self, Ordering};
 
-use crate::{
-    pac::{self, RCC},
-    // util::rcc_en_reset,
-    // MAX_ITERS,
-};
+use crate::pac;
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -260,13 +256,14 @@ impl<const N: u8> Dma<N> {
     };
     /// Initialize a DMA peripheral, including enabling and resetting
     /// its RCC peripheral clock.
-    pub fn new() -> Self {
+    pub fn init() -> Self {
         let regs_ptr = match N {
             1 => pac::DMA1::ptr(),
             2 => pac::DMA2::ptr(),
+            _ => unreachable!(),
         };
 
-        let rcc = unsafe { &(*RCC::ptr()) };
+        // let rcc = unsafe { &(*RCC::ptr()) };
         // rcc_en_reset!(ahb1, dma1, rcc);
 
         Self { regs_ptr }
@@ -385,7 +382,7 @@ impl<const N: u8> Dma<N> {
     }
 
     /// Stop a DMA transfer, if in progress.
-    pub fn stop(mut self, channel: DmaChannel) {
+    pub fn stop(&mut self, channel: DmaChannel) {
         let regs = unsafe { &(*self.regs_ptr) };
         // L4 RM:
         // Once the software activates a channel, it waits for the completion of the programmed
@@ -413,7 +410,7 @@ impl<const N: u8> Dma<N> {
     }
 
     /// Enable a specific type of interrupt.
-    pub fn enable_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    pub fn enable_interrupt(self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
         let regs = unsafe { &(*self.regs_ptr) };
         // Can only be set when the channel is disabled.
@@ -430,7 +427,7 @@ impl<const N: u8> Dma<N> {
         }
     }
 
-    pub fn disable_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    pub fn disable_interrupt(self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
         let regs = unsafe { &(*self.regs_ptr) };
         // Can only be set when the channel is disabled.
@@ -449,7 +446,7 @@ impl<const N: u8> Dma<N> {
         }
     }
 
-    pub fn clear_interrupt(mut self, channel: DmaChannel, interrupt: DmaInterrupt)
+    pub fn clear_interrupt(&mut self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
         let regs = unsafe { &(*self.regs_ptr) };
         match channel {
@@ -547,12 +544,9 @@ impl<const N: u8> Dma<N> {
             let mux = unsafe { &(*pac::DMAMUX1::ptr()) };
 
             match N {
-                1 => {
-                    mux.ccr[channel as usize].modify(|_, w| w.dmareq_id().bits(input as u8));
-                }
-                2 => {
-                    mux.ccr[channel as usize + 8].modify(|_, w| w.dmareq_id().bits(input as u8));
-                }
+                1 => mux.ccr[channel as usize].modify(|_, w| w.dmareq_id().bits(input as u8)),
+                2 => mux.ccr[channel as usize + 8].modify(|_, w| w.dmareq_id().bits(input as u8)),
+                _ => unreachable!(),
             }
         }
     }

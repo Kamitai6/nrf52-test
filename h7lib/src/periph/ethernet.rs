@@ -24,9 +24,7 @@
 
 use core::ptr;
 
-// use crate::rcc::{rec, CoreClocks, ResetEnable};
-use crate::pac as stm32;
-// use crate::stm32;
+use crate::pac;
 
 pub use smoltcp;
 use smoltcp::{
@@ -35,10 +33,7 @@ use smoltcp::{
     wire::EthernetAddress,
 };
 
-use super::{
-    // ethernet::{PinsRMII, StationManagement},
-    gpio::Speed,
-};
+use super::{gpio, rcc};
 
 /// Station Management Interface (SMI) on an ethernet PHY
 pub trait StationManagement {
@@ -54,101 +49,6 @@ pub trait PHY {
     fn phy_reset(&mut self);
     /// PHY initialisation.
     fn phy_init(&mut self);
-}
-
-pub trait PinsRMII {
-    fn set_speed(&mut self, speed: Speed);
-}
-
-impl<REF_CLK, MDIO, MDC, CRS_DV, RXD0, RXD1, TX_EN, TXD0, TXD1> PinsRMII
-    for (REF_CLK, MDIO, MDC, CRS_DV, RXD0, RXD1, TX_EN, TXD0, TXD1)
-where
-    REF_CLK: RefClk,
-    MDIO: Mdio,
-    MDC: Mdc,
-    CRS_DV: CrsDv,
-    RXD0: Rxd0,
-    RXD1: Rxd1,
-    TX_EN: TxEn,
-    TXD0: Txd0,
-    TXD1: Txd1,
-{
-    // RMII
-    fn set_speed(&mut self, speed: Speed) {
-        self.0.set_speed(speed);
-        self.1.set_speed(speed);
-        self.2.set_speed(speed);
-        self.3.set_speed(speed);
-        self.4.set_speed(speed);
-        self.5.set_speed(speed);
-        self.6.set_speed(speed);
-        self.7.set_speed(speed);
-        self.8.set_speed(speed);
-    }
-}
-
-// Four lanes
-impl<
-        REF_CLK,
-        MDIO,
-        MDC,
-        CRS_DV,
-        RXD0,
-        RXD1,
-        RXD2,
-        RXD3,
-        TX_EN,
-        TXD0,
-        TXD1,
-        TXD2,
-        TXD3,
-    > PinsRMII
-    for (
-        REF_CLK,
-        MDIO,
-        MDC,
-        CRS_DV,
-        RXD0,
-        RXD1,
-        RXD2,
-        RXD3,
-        TX_EN,
-        TXD0,
-        TXD1,
-        TXD2,
-        TXD3,
-    )
-where
-    REF_CLK: RefClk,
-    MDIO: Mdio,
-    MDC: Mdc,
-    CRS_DV: CrsDv,
-    RXD0: Rxd0,
-    RXD1: Rxd1,
-    RXD2: Rxd2,
-    RXD3: Rxd3,
-    TX_EN: TxEn,
-    TXD0: Txd0,
-    TXD1: Txd1,
-    TXD2: Txd2,
-    TXD3: Txd3,
-{
-    // RMII
-    fn set_speed(&mut self, speed: Speed) {
-        self.0.set_speed(speed);
-        self.1.set_speed(speed);
-        self.2.set_speed(speed);
-        self.3.set_speed(speed);
-        self.4.set_speed(speed);
-        self.5.set_speed(speed);
-        self.6.set_speed(speed);
-        self.7.set_speed(speed);
-        self.8.set_speed(speed);
-        self.9.set_speed(speed);
-        self.10.set_speed(speed);
-        self.11.set_speed(speed);
-        self.12.set_speed(speed);
-    }
 }
 
 // 6 DMAC, 6 SMAC, 4 q tag, 2 ethernet type II, 1500 ip MTU, 4 CRC, 2
@@ -245,7 +145,7 @@ impl<const TD: usize> TDesRing<TD> {
         // Initialise pointers in the DMA engine. (There will be a memory barrier later
         // before the DMA engine is enabled.)
         unsafe {
-            let dma = &*stm32::ETHERNET_DMA::ptr();
+            let dma = &(*pac::ETHERNET_DMA::ptr());
             dma.dmactx_dlar
                 .write(|w| w.bits(&self.td[0] as *const _ as u32));
             dma.dmactx_rlr.write(|w| w.tdrl().bits(TD as u16 - 1));
@@ -283,7 +183,7 @@ impl<const TD: usize> TDesRing<TD> {
         // Move the tail pointer (TPR) to the next descriptor
         let x = (x + 1) % TD;
         unsafe {
-            let dma = &*stm32::ETHERNET_DMA::ptr();
+            let dma = &(*pac::ETHERNET_DMA::ptr());
             dma.dmactx_dtpr
                 .write(|w| w.bits(&(self.td[x]) as *const _ as u32));
         }
@@ -392,7 +292,7 @@ impl<const RD: usize> RDesRing<RD> {
 
         // Initialise pointers in the DMA engine
         unsafe {
-            let dma = &*stm32::ETHERNET_DMA::ptr();
+            let dma = &(*pac::ETHERNET_DMA::ptr());
             dma.dmacrx_dlar
                 .write(|w| w.bits(&self.rd[0] as *const _ as u32));
             dma.dmacrx_rlr.write(|w| w.rdrl().bits(RD as u16 - 1));
@@ -436,7 +336,7 @@ impl<const RD: usize> RDesRing<RD> {
 
         // Move the tail pointer (TPR) to this descriptor
         unsafe {
-            let dma = &*stm32::ETHERNET_DMA::ptr();
+            let dma = &(*pac::ETHERNET_DMA::ptr());
             dma.dmacrx_dtpr
                 .write(|w| w.bits(&(self.rd[x]) as *const _ as u32));
         }
@@ -486,14 +386,14 @@ impl<const TD: usize, const RD: usize> Default for DesRing<TD, RD> {
 ///
 pub struct EthernetDMA<const TD: usize, const RD: usize> {
     ring: &'static mut DesRing<TD, RD>,
-    eth_dma: stm32::ETHERNET_DMA,
+    eth_dma: pac::ETHERNET_DMA,
 }
 
 ///
 /// Ethernet MAC
 ///
 pub struct EthernetMAC {
-    eth_mac: stm32::ETHERNET_MAC,
+    eth_mac: pac::ETHERNET_MAC,
     eth_phy_addr: u8,
     clock_range: u8,
 }
@@ -517,17 +417,45 @@ pub struct EthernetMAC {
 ///
 /// `EthernetDMA` shall not be moved as it is initialised here
 #[allow(clippy::too_many_arguments)]
-pub fn new<const TD: usize, const RD: usize>(
-    eth_mac: stm32::ETHERNET_MAC,
-    eth_mtl: stm32::ETHERNET_MTL,
-    eth_dma: stm32::ETHERNET_DMA,
-    mut pins: impl PinsRMII,
+pub fn new<
+    const TD: usize, const RD: usize,
+    const REF_CLK_PORT: char, const REF_CLK_PIN: u8, 
+    const MDIO_PORT: char, const MDIO_PIN: u8, 
+    const MDC_PORT: char, const MDC_PIN: u8,
+    const CRS_DV_PORT: char, const CRS_DV_PIN: u8, 
+    const RXD0_PORT: char, const RXD0_PIN: u8, 
+    const RXD1_PORT: char, const RXD1_PIN: u8,
+    const TX_EN_PORT: char, const TX_EN_PIN: u8, 
+    const TXD0_PORT: char, const TXD0_PIN: u8, 
+    const TXD1_PORT: char, const TXD1_PIN: u8,
+>(
+    eth_mac: pac::ETHERNET_MAC,
+    eth_mtl: pac::ETHERNET_MTL,
+    eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
     prec: rec::Eth1Mac,
-    clocks: &CoreClocks,
+    clocks: &rcc::CoreClocks,
+    mut ref_clk_pins: gpio::GPIO<REF_CLK_PORT, REF_CLK_PIN>,
+    mut mdio_pins: gpio::GPIO<MDIO_PORT, MDIO_PIN>,
+    mut mdc_pins: gpio::GPIO<MDC_PORT, MDC_PIN>,
+    mut crs_dv_pins: gpio::GPIO<CRS_DV_PORT, CRS_DV_PIN>,
+    mut rxd0_pins: gpio::GPIO<RXD0_PORT, RXD0_PIN>,
+    mut rxd1_pins: gpio::GPIO<RXD1_PORT, RXD1_PIN>,
+    mut tx_en_pins: gpio::GPIO<TX_EN_PORT, TX_EN_PIN>,
+    mut txd0_pins: gpio::GPIO<TXD0_PORT, TXD0_PIN>,
+    mut txd1_pins: gpio::GPIO<TXD1_PORT, TXD1_PIN>,
 ) -> (EthernetDMA<TD, RD>, EthernetMAC) {
-    pins.set_speed(Speed::VeryHigh);
+    ref_clk_pins.set_speed(gpio::Speed::VeryHigh);
+    mdio_pins.set_speed(gpio::Speed::VeryHigh);
+    mdc_pins.set_speed(gpio::Speed::VeryHigh);
+    crs_dv_pins.set_speed(gpio::Speed::VeryHigh);
+    rxd0_pins.set_speed(gpio::Speed::VeryHigh);
+    rxd1_pins.set_speed(gpio::Speed::VeryHigh);
+    tx_en_pins.set_speed(gpio::Speed::VeryHigh);
+    txd0_pins.set_speed(gpio::Speed::VeryHigh);
+    txd1_pins.set_speed(gpio::Speed::VeryHigh);
+
     unsafe {
         new_unchecked(eth_mac, eth_mtl, eth_dma, ring, mac_addr, prec, clocks)
     }
@@ -556,18 +484,18 @@ pub fn new<const TD: usize, const RD: usize>(
 ///
 /// `EthernetDMA` shall not be moved as it is initialised here
 pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
-    eth_mac: stm32::ETHERNET_MAC,
-    eth_mtl: stm32::ETHERNET_MTL,
-    eth_dma: stm32::ETHERNET_DMA,
+    eth_mac: pac::ETHERNET_MAC,
+    eth_mtl: pac::ETHERNET_MTL,
+    eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
     prec: rec::Eth1Mac,
-    clocks: &CoreClocks,
+    clocks: &rcc::CoreClocks,
 ) -> (EthernetDMA<TD, RD>, EthernetMAC) {
     // RCC
     {
-        let rcc = &*stm32::RCC::ptr();
-        let syscfg = &*stm32::SYSCFG::ptr();
+        let rcc = &(*pac::RCC::ptr());
+        let syscfg = &(*pac::SYSCFG::ptr());
 
         // Ensure syscfg is enabled (for PMCR)
         rcc.apb4enr.modify(|_, w| w.syscfgen().set_bit());
@@ -833,7 +761,7 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
     // MAC layer
 
     // Set the MDC clock frequency in the range 1MHz - 2.5MHz
-    let hclk_mhz = clocks.hclk().raw() / 1_000_000;
+    let hclk_mhz = clocks.hclk.raw() / 1_000_000;
     let csr_clock_range = match hclk_mhz {
         0..=34 => 2,    // Divide by 16
         35..=59 => 3,   // Divide by 26
@@ -997,7 +925,7 @@ impl<const TD: usize, const RD: usize> EthernetDMA<TD, RD> {
 ///
 /// This method implements a single register write to DMACSR
 pub unsafe fn interrupt_handler() {
-    let eth_dma = &*stm32::ETHERNET_DMA::ptr();
+    let eth_dma = &(*pac::ETHERNET_DMA::ptr());
     eth_dma
         .dmacsr
         .write(|w| w.nis().set_bit().ri().set_bit().ti().set_bit());
@@ -1015,7 +943,7 @@ pub unsafe fn interrupt_handler() {
 ///
 /// This method implements a single RMW to DMACIER
 pub unsafe fn enable_interrupt() {
-    let eth_dma = &*stm32::ETHERNET_DMA::ptr();
+    let eth_dma = &(*pac::ETHERNET_DMA::ptr());
     eth_dma
         .dmacier
         .modify(|_, w| w.nie().set_bit().rie().set_bit().tie().set_bit());

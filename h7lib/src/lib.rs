@@ -5,14 +5,14 @@
 pub(crate) const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 
 #[cfg(not(any(
-    feature = "h735",
+    feature = "h742",
     feature = "h743",
-    feature = "h743v",
-    feature = "h747cm4",
-    feature = "h747cm7",
     feature = "h753",
+    feature = "h750",
+    feature = "h742v",
+    feature = "h743v",
     feature = "h753v",
-    feature = "h7b3",
+    feature = "h750v",
 )))]
 compile_error!("This crate requires an MCU-specifying feature to be enabled. eg `l552`.");
 
@@ -20,22 +20,22 @@ compile_error!("This crate requires an MCU-specifying feature to be enabled. eg 
 // stm32 peripherals.
 
 // H7 PAC
-#[cfg(feature = "h735")]
-pub use stm32h7::stm32h735 as pac;
+#[cfg(feature = "h742")]
+pub use stm32h7::stm32h742 as pac;
 #[cfg(feature = "h743")]
 pub use stm32h7::stm32h743 as pac;
-#[cfg(feature = "h743v")]
-pub use stm32h7::stm32h743v as pac;
-#[cfg(feature = "h747cm4")]
-pub use stm32h7::stm32h747cm4 as pac;
-#[cfg(feature = "h747cm7")]
-pub use stm32h7::stm32h747cm7 as pac;
 #[cfg(feature = "h753")]
 pub use stm32h7::stm32h753 as pac;
+#[cfg(feature = "h750")]
+pub use stm32h7::stm32h750 as pac;
+#[cfg(feature = "h742v")]
+pub use stm32h7::stm32h742v as pac;
+#[cfg(feature = "h743v")]
+pub use stm32h7::stm32h743v as pac;
 #[cfg(feature = "h753v")]
 pub use stm32h7::stm32h753v as pac;
-#[cfg(feature = "h7b3")]
-pub use stm32h7::stm32h7b3 as pac;
+#[cfg(feature = "h750v")]
+pub use stm32h7::stm32h750v as pac;
 
 pub use fugit::{
     HertzU32 as Hertz, KilohertzU32 as KiloHertz, MegahertzU32 as MegaHertz,

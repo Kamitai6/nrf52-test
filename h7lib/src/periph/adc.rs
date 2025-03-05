@@ -69,6 +69,33 @@ pub enum Channel {
     C19,
 }
 
+impl Channel {
+    pub fn from(num: u8) -> Option<Channel> {
+        match num {
+            1 => Some(Channel::C1),
+            2 => Some(Channel::C2),
+            3 => Some(Channel::C3),
+            4 => Some(Channel::C4),
+            5 => Some(Channel::C5),
+            6 => Some(Channel::C6),
+            7 => Some(Channel::C7),
+            8 => Some(Channel::C8),
+            9 => Some(Channel::C9),
+            10 => Some(Channel::C10),
+            11 => Some(Channel::C11),
+            12 => Some(Channel::C12),
+            13 => Some(Channel::C13),
+            14 => Some(Channel::C14),
+            15 => Some(Channel::C15),
+            16 => Some(Channel::C16),
+            17 => Some(Channel::C17),
+            18 => Some(Channel::C18),
+            19 => Some(Channel::C19),
+            _ => None, // 1〜19以外の値には対応しない
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum Position {
@@ -88,6 +115,30 @@ pub enum Position {
     P14,
     P15,
     P16,
+}
+
+impl Position {
+    pub fn from(num: u8) -> Option<Position> {
+        match num {
+            1 => Some(Position::P1),
+            2 => Some(Position::P2),
+            3 => Some(Position::P3),
+            4 => Some(Position::P4),
+            5 => Some(Position::P5),
+            6 => Some(Position::P6),
+            7 => Some(Position::P7),
+            8 => Some(Position::P8),
+            9 => Some(Position::P9),
+            10 => Some(Position::P10),
+            11 => Some(Position::P11),
+            12 => Some(Position::P12),
+            13 => Some(Position::P13),
+            14 => Some(Position::P14),
+            15 => Some(Position::P15),
+            16 => Some(Position::P16),
+            _ => None, // 1〜16以外の値には対応しない
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +230,30 @@ pub enum SequeLen {
     S14,
     S15,
     S16,
+}
+
+impl SequeLen {
+    pub fn from(num: u8) -> Option<SequeLen> {
+        match num {
+            1 => Some(SequeLen::S1),
+            2 => Some(SequeLen::S2),
+            3 => Some(SequeLen::S3),
+            4 => Some(SequeLen::S4),
+            5 => Some(SequeLen::S5),
+            6 => Some(SequeLen::S6),
+            7 => Some(SequeLen::S7),
+            8 => Some(SequeLen::S8),
+            9 => Some(SequeLen::S9),
+            10 => Some(SequeLen::S10),
+            11 => Some(SequeLen::S11),
+            12 => Some(SequeLen::S12),
+            13 => Some(SequeLen::S13),
+            14 => Some(SequeLen::S14),
+            15 => Some(SequeLen::S15),
+            16 => Some(SequeLen::S16),
+            _ => None, // 1〜16以外の値には対応しない
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -327,7 +402,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            clock_mode: 1,
+            clock_mode: ClockMode::SyncDiv1,
             sample_time: Default::default(),
             prescaler: Prescaler::D1,
             operation_mode: OperationMode::OneShot,
@@ -350,7 +425,7 @@ impl<const N: u8> Adc<N> {
     const CHECK: () = {
         assert!(1 <= N && N <= 3, "Adc must be 1 - 3.");
     };
-    pub fn new<const PORT: char, const PIN: u8>(adc_pin: gpio::GPIO<PORT, PIN>, cfg: Config) -> Self {
+    pub fn init<const PORT: char, const PIN: u8>(adc_pin: gpio::GPIO<PORT, PIN>, cfg: Config) -> Self {
         let _ = Self::CHECK;
 
         assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
@@ -407,17 +482,18 @@ impl<const N: u8> Adc<N> {
         match N {
             1 | 2 => rcc.ahb1enr.modify(|_, w| w.adc12en().set_bit()),
                 3 => rcc.ahb4enr.modify(|_, w| w.adc3en().set_bit()),
+            _ => unreachable!(),
         }
 
         common.ccr.modify(|_, w| unsafe {
-            w.presc().bits(cfg.prescaler as u8);
-            return w.ckmode().bits(cfg.clock_mode as u8);
+            w.presc().bits(myself.cfg.prescaler as u8);
+            return w.ckmode().bits(myself.cfg.clock_mode as u8);
         });
         Self::set_align(&myself, Align::default());
         Self::advregen_enable(&mut myself);
         Self::calibrate(&mut myself, InputType::SingleEnded);
         Self::calibrate(&mut myself, InputType::Differential);
-        asm::delay(cfg.clock_mode as u32 * 4 * 2); // additional x2 is a pad;
+        asm::delay(myself.cfg.clock_mode as u32 * 4 * 2); // additional x2 is a pad;
 
         #[cfg(all(not(any(feature = "h743", feature = "h753"))))]
         periph.cr.modify(|_, w| w.boost().bits(1));
@@ -429,14 +505,14 @@ impl<const N: u8> Adc<N> {
 
         // Don't set continuous mode until after configuring VDDA, since it needs
         // to take a oneshot reading.
-        periph.cfgr.modify(|_, w| w.cont().bit(cfg.operation_mode as u8 != 0));
+        periph.cfgr.modify(|_, w| w.cont().bit(myself.cfg.operation_mode as u8 != 0));
 
         for ch in 1..10 {
-            Self::set_sample_time(&mut myself, ch, cfg.sample_time);
+            Self::set_sample_time(&mut myself, Channel::from(ch).unwrap());
         }
         // Note: We are getting a hardfault on G431 when setting this for channel 10.
         for ch in 11..19 {
-            Self::set_sample_time(&mut myself, ch, cfg.sample_time);
+            Self::set_sample_time(&mut myself, Channel::from(ch).unwrap());
         }
 
         myself
@@ -444,7 +520,7 @@ impl<const N: u8> Adc<N> {
 
     pub fn set_sequence_len(&mut self, len: SequeLen) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
-        periph.sqr1.modify(|_, w| unsafe { w.l().bits(len - 1) });
+        periph.sqr1.modify(|_, w| unsafe { w.l().bits((len as u8) - 1) });
     }
 
     pub fn set_align(&self, align: Align) {
@@ -657,8 +733,8 @@ impl<const N: u8> Adc<N> {
         let val = periph.difsel.read().bits();
 
         let val_new = match input_type {
-            InputType::SingleEnded => val & !(1 << channel),
-            InputType::Differential => val | (1 << channel),
+            InputType::SingleEnded => val & !(1 << (channel as u8)),
+            InputType::Differential => val | (1 << (channel as u8)),
         };
         periph.difsel.write(|w| unsafe { w.bits(val_new)});
 
@@ -667,32 +743,34 @@ impl<const N: u8> Adc<N> {
         }
     }
 
-    pub fn set_sequence(&mut self, chan: Channel, position: Position) {
+    pub fn set_sequence(&mut self, channel: Channel, position: Position) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         match position {
-            1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(chan) }),
-            2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(chan) }),
-            3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(chan) }),
-            4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(chan) }),
-            5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(chan) }),
-            6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(chan) }),
-            7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(chan) }),
-            8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(chan) }),
-            9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(chan) }),
-            10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(chan) }),
-            11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(chan) }),
-            12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(chan) }),
-            13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(chan) }),
-            14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(chan) }),
-            15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(chan) }),
-            16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(chan) })
+            Position::P1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(channel as u8) }),
+            Position::P2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(channel as u8) }),
+            Position::P3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(channel as u8) }),
+            Position::P4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(channel as u8) }),
+            Position::P5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(channel as u8) }),
+            Position::P6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(channel as u8) }),
+            Position::P7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(channel as u8) }),
+            Position::P8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(channel as u8) }),
+            Position::P9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(channel as u8) }),
+            Position::P10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(channel as u8) }),
+            Position::P11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(channel as u8) }),
+            Position::P12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(channel as u8) }),
+            Position::P13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(channel as u8) }),
+            Position::P14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(channel as u8) }),
+            Position::P15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(channel as u8) }),
+            Position::P16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(channel as u8) })
         }
 
-        periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << chan)) });
+        periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << (channel as u8))) });
     }
 
-    pub fn set_sample_time(&mut self, chan: Channel, smp: SampleTime) {
+    pub fn set_sample_time(&mut self, channel: Channel) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
+
+        let smp: SampleTime = self.cfg.sample_time;
         
         // RM: Note: only allowed when ADSTART = 0 and JADSTART = 0.
         self.stop_conversions();
@@ -700,11 +778,13 @@ impl<const N: u8> Adc<N> {
         // self.disable();
         // while periph.cr.read().adstart().bit_is_set() || periph.cr.read().jadstart().bit_is_set() {}
 
-        if chan < 10 {
+        let channel_u8 = channel as u8;
+
+        if channel_u8 < 10 {
             periph.smpr1.modify(|r, w| unsafe {
                 // 現在の値を読み出して、指定されたチャンネルに対応する部分だけを変更する
-                let mask = !(0b111 << (chan * 3)); // 3ビットのマスク
-                let new_value = (smp as u32) << (chan * 3);
+                let mask = !(0b111 << (channel_u8 * 3)); // 3ビットのマスク
+                let new_value = (smp as u32) << (channel_u8 * 3);
             
                 // 現在のビット値を保持しつつ、新しい値を設定
                 w.bits((r.bits() & mask) | new_value)
@@ -712,8 +792,8 @@ impl<const N: u8> Adc<N> {
         } else {
             periph.smpr2.modify(|r, w| unsafe {
                 // 現在の値を読み出して、指定されたチャンネルに対応する部分だけを変更する
-                let mask = !(0b111 << ((chan % 10) * 3)); // 3ビットのマスク
-                let new_value = (smp as u32) << ((chan % 10) * 3);
+                let mask = !(0b111 << ((channel_u8 % 10) * 3)); // 3ビットのマスク
+                let new_value = (smp as u32) << ((channel_u8 % 10) * 3);
             
                 // 現在のビット値を保持しつつ、新しい値を設定
                 w.bits((r.bits() & mask) | new_value)
@@ -784,8 +864,8 @@ impl<const N: u8> Adc<N> {
             // This sample time is overkill.
             // Note that you will need to reset the sample time if you use this channel on this
             // ADC for something other than reading vref later.
-            self.set_sample_time(constants::VREFINT_CH, SampleTime::T601);
-            let reading = self.read(constants::VREFINT_CH);
+            self.set_sample_time(Channel::from(constants::VREFINT_CH).unwrap());
+            let reading = self.read(Channel::from(constants::VREFINT_CH).unwrap());
             self.stop_conversions();
 
             common.ccr.modify(|_, w| w.vrefen().clear_bit());
@@ -839,7 +919,7 @@ impl<const N: u8> Adc<N> {
 
         // todo: You should call this elsewhere, once, to prevent unneded reg writes.
         for (i, channel) in sequence.iter().enumerate() {
-            self.set_sequence(*channel, i as u8 + 1); // + 1, since sequences start at 1.
+            self.set_sequence(Channel::from(*channel as u8).unwrap(), Position::from(i as u8 + 1).unwrap()); // + 1, since sequences start at 1.
         }
 
         // L4 RM: In Single conversion mode, the ADC performs once all the conversions of the channels.
@@ -883,8 +963,8 @@ impl<const N: u8> Adc<N> {
     pub fn set_trigger(&mut self, trigger: Trigger, edge: TriggerEdge) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         periph.cfgr.modify(|_, w| unsafe {
-            w.exten().bits(edge);
-            w.extsel().bits(trigger)
+            w.exten().bits(edge as u8);
+            w.extsel().bits(trigger as u8)
         });
     }
 
@@ -896,7 +976,7 @@ impl<const N: u8> Adc<N> {
         adc_channels: &[u8],
         dma_channel: dma::DmaChannel,
         channel_cfg: dma::ChannelCfg,
-        dma_periph: &dma::Dma<1>,
+        dma_periph: &mut dma::Dma<1>,
     ) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         let (ptr, len) = (buf.as_mut_ptr(), buf.len());
@@ -912,10 +992,10 @@ impl<const N: u8> Adc<N> {
 
         let mut seq_len = 0;
         for (i, ch) in adc_channels.iter().enumerate() {
-            self.set_sequence(*ch, i as u8 + 1);
+            self.set_sequence(Channel::from(*ch).unwrap(), Position::from(i as u8 + 1).unwrap());
             seq_len += 1;
         }
-        self.set_sequence_len(seq_len);
+        self.set_sequence_len(SequeLen::from(seq_len).unwrap());
 
         periph.cr.modify(|_, w| w.adstart().set_bit());  // Start
 
