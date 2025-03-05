@@ -5,7 +5,7 @@ use core::{cell::UnsafeCell, ptr};
 // Used for while loops, to allow returning an error instead of hanging.
 const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 
-use crate::pac;
+use crate::{pac, rcc_en_reset};
 
 use super::dma;
 use super::gpio;
@@ -323,12 +323,24 @@ impl<const N: u8> Spi<N> {
             1 => pac::SPI1::ptr(),
             2 => pac::SPI2::ptr(),
             3 => pac::SPI3::ptr(),
-            _ => panic!("Unsupported SPI number"),
+            4 => pac::SPI4::ptr(),
+            5 => pac::SPI5::ptr(),
+            6 => pac::SPI6::ptr(),
+            _ => unreachable!(),
         };
         let periph = unsafe { &(*regs_ptr)};
+        let rcc = unsafe { &(*pac::RCC::ptr())};
 
         // Enable clock for SPI
-        // let _ = prec.enable(); // drop, can be recreated by free method
+        match N {
+            1 => rcc_en_reset!(apb2, spi1, rcc),
+            2 => rcc_en_reset!(apb1, spi2, rcc),
+            3 => rcc_en_reset!(apb1, spi3, rcc),
+            4 => rcc_en_reset!(apb2, spi4, rcc),
+            5 => rcc_en_reset!(apb2, spi5, rcc),
+            6 => rcc_en_reset!(apb4, spi6, rcc),
+            _ => unreachable!()
+        };
 
         // Disable SS output
         periph.cfg2.write(|w| w.ssoe().disabled());

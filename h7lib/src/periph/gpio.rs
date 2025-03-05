@@ -1,4 +1,6 @@
-use crate::pac;
+///! GPIO
+
+use crate::{pac, rcc_en_reset};
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -83,34 +85,30 @@ impl<const PORT: char, const PIN: u8> GPIO<PORT, PIN> {
         let _ = Self::CHECK;
         let regs_ptr = match PORT {
             'A' => crate::pac::GPIOA::ptr(),
-            'B' => crate::pac::GPIOB::ptr() as _,
-            'C' => crate::pac::GPIOC::ptr() as _,
-            'D' => crate::pac::GPIOD::ptr() as _,
-            'E' => crate::pac::GPIOE::ptr() as _,
-            'F' => crate::pac::GPIOF::ptr() as _,
-            'G' => crate::pac::GPIOG::ptr() as _,
-            'H' => crate::pac::GPIOH::ptr() as _,
+            'B' => crate::pac::GPIOB::ptr(),
+            'C' => crate::pac::GPIOC::ptr(),
+            'D' => crate::pac::GPIOD::ptr(),
+            'E' => crate::pac::GPIOE::ptr(),
+            'F' => crate::pac::GPIOF::ptr(),
+            'G' => crate::pac::GPIOG::ptr(),
+            'H' => crate::pac::GPIOH::ptr(),
             _ => unreachable!(),
         };
 
         let regs = unsafe { &(*regs_ptr) };
         let rcc = unsafe { &(*pac::RCC::ptr()) };
 
-        let port_num = u32::from(PORT) - u32::from('A');
-
-        unsafe {
-            rcc.ahb4enr.modify(|r, w| {
-                w.bits(r.bits() | 1 << port_num)
-            });
-
-            rcc.ahb4rstr.modify(|r, w| {
-                w.bits(r.bits() | 1 << port_num)
-            });
-
-            rcc.ahb4rstr.modify(|r, w| {
-                w.bits(r.bits() & !(1 << port_num))
-            });
-        }
+        match PORT {
+            'A' => rcc_en_reset!(ahb4, gpioa, rcc),
+            'B' => rcc_en_reset!(ahb4, gpiob, rcc),
+            'C' => rcc_en_reset!(ahb4, gpioc, rcc),
+            'D' => rcc_en_reset!(ahb4, gpiod, rcc),
+            'E' => rcc_en_reset!(ahb4, gpioe, rcc),
+            'F' => rcc_en_reset!(ahb4, gpiof, rcc),
+            'G' => rcc_en_reset!(ahb4, gpiog, rcc),
+            'H' => rcc_en_reset!(ahb4, gpioh, rcc),
+            _ => unreachable!(),
+        };
 
         match mode {
             PinMode::Output(outtype) => {

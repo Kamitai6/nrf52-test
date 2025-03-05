@@ -8,7 +8,7 @@ use cortex_m::{asm, delay::Delay};
 
 use super::dma;
 use super::gpio;
-use crate::pac;
+use crate::{pac, rcc_en_reset};
 
 // Address of the ADCinterval voltage reference. This address is found in the User manual. It appears
 // to be the same for most STM32s. The voltage this is measured at my vary by variant; eg 3.0 vice 3.3.
@@ -480,8 +480,8 @@ impl<const N: u8> Adc<N> {
         let common = unsafe { &(*common_regs_ptr)};
 
         match N {
-            1 | 2 => rcc.ahb1enr.modify(|_, w| w.adc12en().set_bit()),
-                3 => rcc.ahb4enr.modify(|_, w| w.adc3en().set_bit()),
+            1 | 2 => rcc_en_reset!(ahb1, adc12, rcc),
+                3 => rcc_en_reset!(ahb4, adc3, rcc),
             _ => unreachable!(),
         }
 

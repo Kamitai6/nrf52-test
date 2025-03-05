@@ -2,7 +2,7 @@
 
 // use crate::stm32::rcc::{d2ccip2r as ccip2r, d3ccipr as srdccipr};
 
-use crate::{pac, Hertz};
+use crate::{pac, Hertz, rcc_en_reset};
 use super::rcc;
 use crate::pac::{
     TIM1, TIM12, TIM13, TIM14, TIM15, TIM16, TIM17, TIM2, TIM3, TIM4, TIM5,
@@ -46,11 +46,11 @@ pub struct Timer<TIM>
 }
 
 macro_rules! make_timer {
-    ($TIMX:ident, $timX:ident, $cntType:ty) => {
+    ($TIMX:ident, $timX:ident, $apb:ident, $cntType:ty) => {
         impl Timer<pac::$TIMX> {
             pub fn $timX(regs: pac::$TIMX, tim_type: TimerType, clocks: rcc::CoreClocks) -> Self {
-                // enable and reset peripheral to a clean state
-                // let _ = prec.enable().reset(); // drop, can be recreated by free method
+                let rcc = unsafe { &(*pac::RCC::ptr()) };
+                rcc_en_reset!($apb, $timX, rcc);
 
                 let clock = $TIMX::get_clk(&clocks)
                 .expect(concat!(stringify!($TIMX), ": Input clock not running!")).raw();
@@ -227,22 +227,22 @@ macro_rules! make_timer {
         }
     }
 }
-
 // Advanced-control
-make_timer!(TIM1, tim1, u16);
-make_timer!(TIM8, tim8, u16);
+make_timer!(TIM1, tim1, apb2, u16);
+make_timer!(TIM8, tim8, apb2, u16);
 
-make_timer!(TIM2, tim2, u32);
-make_timer!(TIM3, tim3, u16);
-make_timer!(TIM4, tim4, u16);
-make_timer!(TIM5, tim5, u32);
+make_timer!(TIM2, tim2, apb1, u32);
+make_timer!(TIM3, tim3, apb1, u16);
+make_timer!(TIM4, tim4, apb1, u16);
+make_timer!(TIM5, tim5, apb1, u32);
 
-make_timer!(TIM6, tim6, u16);
-make_timer!(TIM7, tim7, u16);
+make_timer!(TIM6, tim6, apb1, u16);
+make_timer!(TIM7, tim7, apb1, u16);
 
-make_timer!(TIM12, tim12, u16);
-make_timer!(TIM13, tim13, u16);
-make_timer!(TIM14, tim14, u16);
-make_timer!(TIM15, tim15, u16);
-make_timer!(TIM16, tim16, u16);
-make_timer!(TIM17, tim17, u16);
+make_timer!(TIM12, tim12, apb1, u16);
+make_timer!(TIM13, tim13, apb1, u16);
+make_timer!(TIM14, tim14, apb1, u16);
+
+make_timer!(TIM15, tim15, apb2, u16);
+make_timer!(TIM16, tim16, apb2, u16);
+make_timer!(TIM17, tim17, apb2, u16);

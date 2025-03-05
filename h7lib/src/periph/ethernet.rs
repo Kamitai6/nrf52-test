@@ -24,7 +24,7 @@
 
 use core::ptr;
 
-use crate::pac;
+use crate::{pac, rcc_en_reset};
 
 pub use smoltcp;
 use smoltcp::{
@@ -434,7 +434,6 @@ pub fn new<
     eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
-    prec: rec::Eth1Mac,
     clocks: &rcc::CoreClocks,
     mut ref_clk_pins: gpio::GPIO<REF_CLK_PORT, REF_CLK_PIN>,
     mut mdio_pins: gpio::GPIO<MDIO_PORT, MDIO_PIN>,
@@ -457,7 +456,7 @@ pub fn new<
     txd1_pins.set_speed(gpio::Speed::VeryHigh);
 
     unsafe {
-        new_unchecked(eth_mac, eth_mtl, eth_dma, ring, mac_addr, prec, clocks)
+        new_unchecked(eth_mac, eth_mtl, eth_dma, ring, mac_addr, clocks)
     }
 }
 
@@ -489,7 +488,6 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
     eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
-    prec: rec::Eth1Mac,
     clocks: &rcc::CoreClocks,
 ) -> (EthernetDMA<TD, RD>, EthernetMAC) {
     // RCC
@@ -501,7 +499,7 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
         rcc.apb4enr.modify(|_, w| w.syscfgen().set_bit());
 
         // AHB1 ETH1MACEN
-        prec.enable();
+        rcc_en_reset!(ahb1, eth1mac, rcc);
 
         // Also need to enable the transmission and reception clocks, which
         // don't have prec objects. They don't have prec objects because they

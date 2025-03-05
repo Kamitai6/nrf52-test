@@ -4,6 +4,8 @@
 // Used for while loops, to allow returning an error instead of hanging.
 pub(crate) const MAX_ITERS: u32 = 300_000; // todo: What should this be?
 
+extern crate paste;
+
 #[cfg(not(any(
     feature = "h742",
     feature = "h743",

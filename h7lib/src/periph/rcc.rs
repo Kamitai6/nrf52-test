@@ -1004,3 +1004,73 @@ impl Rcc {
         config.pll1.r_ck = pll1_r_ck;
     }
 }
+
+/// Enables and resets peripheral clocks on various RCC registesr.
+/// The first argument is a `apb1`, `ahb2` etc to specify the reg block. The second is something like
+/// `tim1`, and the third is a `pac::RCC`.
+#[macro_export]
+macro_rules! rcc_en_reset {
+    (apb1, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.apb1lenr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.apb1lenr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.apb1lrstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.apb1lrstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (apb2, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.apb2enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.apb2enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.apb2rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.apb2rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (apb4, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.apb4enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.apb4enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.apb4rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.apb4rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (ahb1, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.ahb1enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.ahb1enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.ahb1rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.ahb1rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (ahb2, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.ahb2enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.ahb2enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.ahb2rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.ahb2rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (ahb3, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.ahb3enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.ahb3enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.ahb3rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.ahb3rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+    (ahb4, $periph:expr, $rcc:expr) => {
+        paste::paste! {
+            if $rcc.ahb4enr.read().[<$periph en>]().bit_is_clear() {
+                $rcc.ahb4enr.modify(|_, w| w.[<$periph en>]().set_bit());
+                $rcc.ahb4rstr.modify(|_, w| w.[<$periph rst>]().set_bit());
+                $rcc.ahb4rstr.modify(|_, w| w.[<$periph rst>]().clear_bit());
+            }
+        }
+    };
+}

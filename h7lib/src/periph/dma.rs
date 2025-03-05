@@ -15,7 +15,7 @@
 
 use core::sync::atomic::{self, Ordering};
 
-use crate::pac;
+use crate::{pac, rcc_en_reset};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -263,8 +263,12 @@ impl<const N: u8> Dma<N> {
             _ => unreachable!(),
         };
 
-        // let rcc = unsafe { &(*RCC::ptr()) };
-        // rcc_en_reset!(ahb1, dma1, rcc);
+        let rcc = unsafe { &(*pac::RCC::ptr()) };
+        match N {
+            1 => rcc_en_reset!(ahb1, dma1, rcc),
+            2 => rcc_en_reset!(ahb1, dma2, rcc),
+            _ => unreachable!(),
+        };
 
         Self { regs_ptr }
     }
