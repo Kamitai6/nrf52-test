@@ -501,7 +501,7 @@ impl<const N: u8> Spi<N> {
         let len = write_words.len();
         let mut write = write_words.iter();
         for _ in 0..core::cmp::min(FIFO_LEN, len as u8) {
-            self.send(*write.next().unwrap());
+            self.send(*write.next().unwrap()).unwrap();
         }
 
         // Continue filling write FIFO and emptying read FIFO
@@ -526,7 +526,7 @@ impl<const N: u8> Spi<N> {
         // Fill the first half of the write FIFO
         let len = words.len() as u8;
         for i in 0..core::cmp::min(FIFO_LEN, len) {
-            self.send(words[i as usize]);
+            self.send(words[i as usize]).unwrap();
         }
 
         for i in FIFO_LEN..len + FIFO_LEN {

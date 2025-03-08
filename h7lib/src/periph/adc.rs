@@ -98,44 +98,44 @@ impl Channel {
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
-pub enum Position {
-    P1 = 1,
-    P2,
-    P3,
-    P4,
-    P5,
-    P6,
-    P7,
-    P8,
-    P9,
-    P10,
-    P11,
-    P12,
-    P13,
-    P14,
-    P15,
-    P16,
+pub enum SeqPos {
+    SP1 = 1,
+    SP2,
+    SP3,
+    SP4,
+    SP5,
+    SP6,
+    SP7,
+    SP8,
+    SP9,
+    SP10,
+    SP11,
+    SP12,
+    SP13,
+    SP14,
+    SP15,
+    SP16,
 }
 
-impl Position {
-    pub fn from(num: u8) -> Option<Position> {
+impl SeqPos {
+    pub fn from(num: u8) -> Option<SeqPos> {
         match num {
-            1 => Some(Position::P1),
-            2 => Some(Position::P2),
-            3 => Some(Position::P3),
-            4 => Some(Position::P4),
-            5 => Some(Position::P5),
-            6 => Some(Position::P6),
-            7 => Some(Position::P7),
-            8 => Some(Position::P8),
-            9 => Some(Position::P9),
-            10 => Some(Position::P10),
-            11 => Some(Position::P11),
-            12 => Some(Position::P12),
-            13 => Some(Position::P13),
-            14 => Some(Position::P14),
-            15 => Some(Position::P15),
-            16 => Some(Position::P16),
+            1 => Some(SeqPos::SP1),
+            2 => Some(SeqPos::SP2),
+            3 => Some(SeqPos::SP3),
+            4 => Some(SeqPos::SP4),
+            5 => Some(SeqPos::SP5),
+            6 => Some(SeqPos::SP6),
+            7 => Some(SeqPos::SP7),
+            8 => Some(SeqPos::SP8),
+            9 => Some(SeqPos::SP9),
+            10 => Some(SeqPos::SP10),
+            11 => Some(SeqPos::SP11),
+            12 => Some(SeqPos::SP12),
+            13 => Some(SeqPos::SP13),
+            14 => Some(SeqPos::SP14),
+            15 => Some(SeqPos::SP15),
+            16 => Some(SeqPos::SP16),
             _ => None, // 1〜16以外の値には対応しない
         }
     }
@@ -208,51 +208,6 @@ impl Default for SampleTime {
     /// lower-than-accurate readings.
     fn default() -> Self {
         SampleTime::T181_5
-    }
-}
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub enum SequeLen {
-    S1 = 1,
-    S2,
-    S3,
-    S4,
-    S5,
-    S6,
-    S7,
-    S8,
-    S9,
-    S10,
-    S11,
-    S12,
-    S13,
-    S14,
-    S15,
-    S16,
-}
-
-impl SequeLen {
-    pub fn from(num: u8) -> Option<SequeLen> {
-        match num {
-            1 => Some(SequeLen::S1),
-            2 => Some(SequeLen::S2),
-            3 => Some(SequeLen::S3),
-            4 => Some(SequeLen::S4),
-            5 => Some(SequeLen::S5),
-            6 => Some(SequeLen::S6),
-            7 => Some(SequeLen::S7),
-            8 => Some(SequeLen::S8),
-            9 => Some(SequeLen::S9),
-            10 => Some(SequeLen::S10),
-            11 => Some(SequeLen::S11),
-            12 => Some(SequeLen::S12),
-            13 => Some(SequeLen::S13),
-            14 => Some(SequeLen::S14),
-            15 => Some(SequeLen::S15),
-            16 => Some(SequeLen::S16),
-            _ => None, // 1〜16以外の値には対応しない
-        }
     }
 }
 
@@ -433,21 +388,21 @@ impl<const N: u8> Adc<N> {
         assert!(
             match N {
                 1 => match PORT {
-                    'A' => 0 <= PIN && PIN <= 7,
-                    'B' => 0 <= PIN && PIN <= 1,
-                    'C' => 0 <= PIN && PIN <= 5,
+                    'A' => PIN <= 7,
+                    'B' => PIN <= 1,
+                    'C' => PIN <= 5,
                     'F' => 11 <= PIN && PIN <= 12,
                     _ => false,
                 },
                 2 => match PORT {
                     'A' => 2 <= PIN && PIN <= 7,
-                    'B' => 0 <= PIN && PIN <= 1,
-                    'C' => 0 <= PIN && PIN <= 5,
+                    'B' => PIN <= 1,
+                    'C' => PIN <= 5,
                     'F' => 13 <= PIN && PIN <= 14,
                     _ => false,
                 },
                 3 => match PORT {
-                    'C' => 0 <= PIN && PIN <= 2,
+                    'C' => PIN <= 2,
                     'F' => 3 <= PIN && PIN <= 10,
                     'H' => 2 <= PIN && PIN <= 5,
                     _ => false,
@@ -518,9 +473,10 @@ impl<const N: u8> Adc<N> {
         myself
     }
 
-    pub fn set_sequence_len(&mut self, len: SequeLen) {
+    pub fn set_sequence_len(&mut self, len: u8) {
+        assert!(1 <= len && len <= 16, "len must be 1 ~ 16");
         let periph = unsafe { &(*self.periph_regs_ptr)};
-        periph.sqr1.modify(|_, w| unsafe { w.l().bits((len as u8) - 1) });
+        periph.sqr1.modify(|_, w| unsafe { w.l().bits(len - 1) });
     }
 
     pub fn set_align(&self, align: Align) {
@@ -743,25 +699,25 @@ impl<const N: u8> Adc<N> {
         }
     }
 
-    pub fn set_sequence(&mut self, channel: Channel, position: Position) {
+    pub fn set_sequence(&mut self, channel: Channel, position: SeqPos) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
         match position {
-            Position::P1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(channel as u8) }),
-            Position::P2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(channel as u8) }),
-            Position::P3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(channel as u8) }),
-            Position::P4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(channel as u8) }),
-            Position::P5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(channel as u8) }),
-            Position::P6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(channel as u8) }),
-            Position::P7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(channel as u8) }),
-            Position::P8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(channel as u8) }),
-            Position::P9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(channel as u8) }),
-            Position::P10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(channel as u8) }),
-            Position::P11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(channel as u8) }),
-            Position::P12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(channel as u8) }),
-            Position::P13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(channel as u8) }),
-            Position::P14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(channel as u8) }),
-            Position::P15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(channel as u8) }),
-            Position::P16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(channel as u8) })
+            SeqPos::SP1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(channel as u8) }),
+            SeqPos::SP2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(channel as u8) }),
+            SeqPos::SP3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(channel as u8) }),
+            SeqPos::SP4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(channel as u8) }),
+            SeqPos::SP5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(channel as u8) }),
+            SeqPos::SP6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(channel as u8) }),
+            SeqPos::SP7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(channel as u8) }),
+            SeqPos::SP8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(channel as u8) }),
+            SeqPos::SP9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(channel as u8) }),
+            SeqPos::SP10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(channel as u8) }),
+            SeqPos::SP11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(channel as u8) }),
+            SeqPos::SP12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(channel as u8) }),
+            SeqPos::SP13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(channel as u8) }),
+            SeqPos::SP14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(channel as u8) }),
+            SeqPos::SP15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(channel as u8) }),
+            SeqPos::SP16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(channel as u8) })
         }
 
         periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << (channel as u8))) });
@@ -914,12 +870,12 @@ impl<const N: u8> Adc<N> {
     /// Start a conversion: Either a single measurement, or continuous conversions.
     /// Blocks until the conversion is complete.
     /// See L4 RM 16.4.15 for details.
-    pub fn start_conversion(&mut self, sequence: &[SequeLen]) {
+    pub fn start_conversion(&mut self, sequence: &[u8]) {
         let periph = unsafe { &(*self.periph_regs_ptr)};
 
         // todo: You should call this elsewhere, once, to prevent unneded reg writes.
         for (i, channel) in sequence.iter().enumerate() {
-            self.set_sequence(Channel::from(*channel as u8).unwrap(), Position::from(i as u8 + 1).unwrap()); // + 1, since sequences start at 1.
+            self.set_sequence(Channel::from(*channel as u8).unwrap(), SeqPos::from(i as u8 + 1).unwrap()); // + 1, since sequences start at 1.
         }
 
         // L4 RM: In Single conversion mode, the ADC performs once all the conversions of the channels.
@@ -948,7 +904,7 @@ impl<const N: u8> Adc<N> {
 
     /// Take a single reading; return a raw integer value.
     pub fn read(&mut self, channel: Channel) -> u16 {
-        self.start_conversion(&[channel]);
+        self.start_conversion(&[channel as u8]);
         self.read_result()
     }
 
@@ -992,10 +948,10 @@ impl<const N: u8> Adc<N> {
 
         let mut seq_len = 0;
         for (i, ch) in adc_channels.iter().enumerate() {
-            self.set_sequence(Channel::from(*ch).unwrap(), Position::from(i as u8 + 1).unwrap());
+            self.set_sequence(Channel::from(*ch).unwrap(), SeqPos::from(i as u8 + 1).unwrap());
             seq_len += 1;
         }
-        self.set_sequence_len(SequeLen::from(seq_len).unwrap());
+        self.set_sequence_len(seq_len);
 
         periph.cr.modify(|_, w| w.adstart().set_bit());  // Start
 

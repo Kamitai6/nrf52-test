@@ -68,7 +68,7 @@ pub enum Edge {
 
 #[derive(Clone)]
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
-pub(super) struct GPIO<const PORT: char, const PIN: u8> {
+pub struct GPIO<const PORT: char, const PIN: u8> {
     pub mode: PinMode,
 
     regs_ptr: *const pac::gpioa::RegisterBlock,

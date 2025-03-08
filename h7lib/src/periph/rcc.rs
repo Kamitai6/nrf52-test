@@ -87,6 +87,7 @@ pub enum ResetReason {
 /// The existence of this value indicates that the core clock
 /// configuration can no longer be changed
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub struct CoreClocks {
     pub(super) hclk: Hertz,
     pub(super) pclk1: Hertz,
