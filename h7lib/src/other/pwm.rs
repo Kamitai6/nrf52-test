@@ -7,8 +7,7 @@
 
 use core::cell::RefCell;
 use crate::{pac, Hertz, NanoSeconds, rcc_en_reset};
-use crate::periph::timer;
-
+use crate::periph::{gpio, timer};
 
 // Dual channel timers
 pins! {
@@ -228,13 +227,13 @@ pins! {
         CH4N: []
 }
 
-pub struct Pwm<TIM> {
-    timer: timer::Timer<TIM>,
+pub struct Pwm<const N: u8> {
+    timer: timer::Timer<N>,
     channel: u8
 }
 
-impl<TIM> Pwm<TIM> {
-    fn new(GPIO, Option(GPIO)){}
+impl<const N: u8> Pwm<N> {
+    fn new(gpio::GPIO<>, Option(GPIO)){}
 
     fn enable(&mut self) {
         let tim = unsafe { &*<$TIMX>::ptr() };
