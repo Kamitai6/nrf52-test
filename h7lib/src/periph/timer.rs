@@ -43,9 +43,9 @@ pub struct ChannelOption {
 }
 
 /// Timer channel
-pub struct Channel<const TIM: u8, const N: u8>;
+pub struct Channel<const T: u8, const N: u8>;
 
-impl<const TIM: u8, const N: u8> Channel<TIM, N> {
+impl<const T: u8, const N: u8> Channel<T, N> {
     fn set_compare() {
     }
     fn get_count() {
