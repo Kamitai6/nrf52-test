@@ -2,6 +2,8 @@
 
 use crate::{pac, rcc_en_reset};
 
+use super::rcc;
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 /// Values for `GPIOx_OTYPER`.
@@ -68,20 +70,20 @@ pub enum Edge {
 
 #[derive(Clone)]
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
-pub struct GPIO<const PORT: char, const PIN: u8> {
+pub struct Gpio<const PORT: char, const PIN: u8> {
     pub mode: PinMode,
 
     regs_ptr: *const pac::gpioa::RegisterBlock,
 }
 
-impl<const PORT: char, const PIN: u8> GPIO<PORT, PIN> {
+impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
     const CHECK: () = {
         assert!(PIN <= 15, "Pin must be 0 - 15.");
     };
     /// Create a new pin, with a specific mode. Enables the RCC peripheral clock to the port,
     /// if not already enabled. Example: `let pa1 = Pin::new(Port::A, 1, PinMode::Output);` Leaves settings
     /// other than mode and alternate function (if applicable) at their hardware defaults.
-    pub fn init(mode: PinMode) -> Self {
+    pub fn init(mode: PinMode, _clock: &rcc::Rcc) -> Self {
         let _ = Self::CHECK;
         let regs_ptr = match PORT {
             'A' => crate::pac::GPIOA::ptr(),
@@ -300,11 +302,11 @@ impl<const PORT: char, const PIN: u8> GPIO<PORT, PIN> {
     }
 }
 
-pub type PA<const PIN: u8> = GPIO<'A', PIN>;
-pub type PB<const PIN: u8> = GPIO<'B', PIN>;
-pub type PC<const PIN: u8> = GPIO<'C', PIN>;
-pub type PD<const PIN: u8> = GPIO<'D', PIN>;
-pub type PE<const PIN: u8> = GPIO<'E', PIN>;
-pub type PF<const PIN: u8> = GPIO<'F', PIN>;
-pub type PG<const PIN: u8> = GPIO<'G', PIN>;
-pub type PH<const PIN: u8> = GPIO<'H', PIN>;
+pub type PA<const PIN: u8> = Gpio<'A', PIN>;
+pub type PB<const PIN: u8> = Gpio<'B', PIN>;
+pub type PC<const PIN: u8> = Gpio<'C', PIN>;
+pub type PD<const PIN: u8> = Gpio<'D', PIN>;
+pub type PE<const PIN: u8> = Gpio<'E', PIN>;
+pub type PF<const PIN: u8> = Gpio<'F', PIN>;
+pub type PG<const PIN: u8> = Gpio<'G', PIN>;
+pub type PH<const PIN: u8> = Gpio<'H', PIN>;

@@ -41,21 +41,23 @@ pub enum SupplyConfiguration {
 /// See RM0399, Table 32. Supply configuration control, for available configurations.
 /// Sets the PWR_CR3 register, LDOEN, SDEN, SDEXTHP, SDLEVEL, and BYPASS fields.
 pub struct PwrConfig {
-    target_vos: VoltageScale,
+    pub target_vos: VoltageScale,
     #[cfg(feature = "smps")]
     supply_configuration: SupplyConfiguration,
 }
 
-pub struct Power {
-    pub vos: VoltageScale
-}
-
-impl Default for Power {
+impl Default for PwrConfig {
     fn default() -> Self {
         Self {
-            vos: VoltageScale::Scale1,
+            target_vos: VoltageScale::Scale1,
+            #[cfg(feature = "smps")]
+            supply_configuration: SupplyConfiguration::Default,
         }
     }
+}
+
+pub struct Power {
+    pub vos: VoltageScale
 }
 
 impl Power {

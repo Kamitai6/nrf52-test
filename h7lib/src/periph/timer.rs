@@ -63,7 +63,7 @@ macro_rules! make_timer {
     ($N:expr, $ChN:literal, $cntType:ident, $apb:ident, $deadtime:literal, $alignment:literal) => {
         paste::paste! {
         impl Timer<$N> {
-            pub fn new(count_mode: CountMode, core_clocks: &rcc::CoreClocks) -> Self 
+            pub fn init(count_mode: CountMode, core_clocks: &rcc::Rcc) -> Self 
             {
                 let rcc = unsafe { &(*pac::RCC::ptr()) };
                 

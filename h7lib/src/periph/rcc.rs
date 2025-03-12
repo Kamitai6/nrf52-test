@@ -82,13 +82,42 @@ pub enum ResetReason {
     },
 }
 
-/// Frozen core clock frequencies
-///
-/// The existence of this value indicates that the core clock
-/// configuration can no longer be changed
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-pub struct CoreClocks {
+/// Configuration of the core clocks
+pub struct Config {
+    pub hse: Option<u32>,
+    pub bypass_hse: bool,
+    pub sys_ck: Option<u32>,
+    pub per_ck: Option<u32>,
+    pub rcc_hclk: Option<u32>,
+    pub rcc_pclk1: Option<u32>,
+    pub rcc_pclk2: Option<u32>,
+    pub rcc_pclk3: Option<u32>,
+    pub rcc_pclk4: Option<u32>,
+    pub pll1: PllConfig,
+    pub pll2: PllConfig,
+    pub pll3: PllConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            hse: None,
+            bypass_hse: false,
+            sys_ck: None,
+            per_ck: None,
+            rcc_hclk: None,
+            rcc_pclk1: None,
+            rcc_pclk2: None,
+            rcc_pclk3: None,
+            rcc_pclk4: None,
+            pll1: PllConfig::default(),
+            pll2: PllConfig::default(),
+            pll3: PllConfig::default(),
+        }
+    }
+}
+
+pub struct Rcc {
     pub(super) hclk: Hertz,
     pub(super) pclk1: Hertz,
     pub(super) pclk2: Hertz,
@@ -117,45 +146,6 @@ pub struct CoreClocks {
     pub(super) timy_ker_ck: Hertz,
     pub(super) sys_ck: Hertz,
     pub(super) c_ck: Hertz,
-}
-
-/// Configuration of the core clocks
-pub struct Config {
-    hse: Option<u32>,
-    bypass_hse: bool,
-    sys_ck: Option<u32>,
-    per_ck: Option<u32>,
-    rcc_hclk: Option<u32>,
-    rcc_pclk1: Option<u32>,
-    rcc_pclk2: Option<u32>,
-    rcc_pclk3: Option<u32>,
-    rcc_pclk4: Option<u32>,
-    pll1: PllConfig,
-    pll2: PllConfig,
-    pll3: PllConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            hse: None,
-            bypass_hse: false,
-            sys_ck: None,
-            per_ck: None,
-            rcc_hclk: None,
-            rcc_pclk1: None,
-            rcc_pclk2: None,
-            rcc_pclk3: None,
-            rcc_pclk4: None,
-            pll1: PllConfig::default(),
-            pll2: PllConfig::default(),
-            pll3: PllConfig::default(),
-        }
-    }
-}
-
-pub struct Rcc {
-    pub clocks: CoreClocks,
 }
 
 impl Rcc {
@@ -476,36 +466,34 @@ impl Rcc {
 
         // Return frozen clock configuration
         Self {
-            clocks: CoreClocks {
-                hclk: Hertz::from_raw(rcc_hclk),
-                pclk1: Hertz::from_raw(rcc_pclk1),
-                pclk2: Hertz::from_raw(rcc_pclk2),
-                pclk3: Hertz::from_raw(rcc_pclk3),
-                pclk4: Hertz::from_raw(rcc_pclk4),
-                ppre1,
-                ppre2,
-                ppre3,
-                ppre4,
-                csi_ck: Some(Hertz::from_raw(csi)),
-                hsi_ck: Some(Hertz::from_raw(hsi)),
-                hsi48_ck: Some(Hertz::from_raw(hsi48)),
-                lsi_ck: Some(Hertz::from_raw(lsi)),
-                per_ck: Some(Hertz::from_raw(per_ck)),
-                hse_ck,
-                pll1_p_ck,
-                pll1_q_ck,
-                pll1_r_ck,
-                pll2_p_ck,
-                pll2_q_ck,
-                pll2_r_ck,
-                pll3_p_ck,
-                pll3_q_ck,
-                pll3_r_ck,
-                timx_ker_ck: Hertz::from_raw(rcc_timx_ker_ck),
-                timy_ker_ck: Hertz::from_raw(rcc_timy_ker_ck),
-                sys_ck,
-                c_ck: Hertz::from_raw(sys_d1cpre_ck),
-            },
+            hclk: Hertz::from_raw(rcc_hclk),
+            pclk1: Hertz::from_raw(rcc_pclk1),
+            pclk2: Hertz::from_raw(rcc_pclk2),
+            pclk3: Hertz::from_raw(rcc_pclk3),
+            pclk4: Hertz::from_raw(rcc_pclk4),
+            ppre1,
+            ppre2,
+            ppre3,
+            ppre4,
+            csi_ck: Some(Hertz::from_raw(csi)),
+            hsi_ck: Some(Hertz::from_raw(hsi)),
+            hsi48_ck: Some(Hertz::from_raw(hsi48)),
+            lsi_ck: Some(Hertz::from_raw(lsi)),
+            per_ck: Some(Hertz::from_raw(per_ck)),
+            hse_ck,
+            pll1_p_ck,
+            pll1_q_ck,
+            pll1_r_ck,
+            pll2_p_ck,
+            pll2_q_ck,
+            pll2_r_ck,
+            pll3_p_ck,
+            pll3_q_ck,
+            pll3_r_ck,
+            timx_ker_ck: Hertz::from_raw(rcc_timx_ker_ck),
+            timy_ker_ck: Hertz::from_raw(rcc_timy_ker_ck),
+            sys_ck,
+            c_ck: Hertz::from_raw(sys_d1cpre_ck),
         }
     }
 

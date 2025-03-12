@@ -434,16 +434,16 @@ pub fn new<
     eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
-    clocks: &rcc::CoreClocks,
-    mut ref_clk_pins: gpio::GPIO<REF_CLK_PORT, REF_CLK_PIN>,
-    mut mdio_pins: gpio::GPIO<MDIO_PORT, MDIO_PIN>,
-    mut mdc_pins: gpio::GPIO<MDC_PORT, MDC_PIN>,
-    mut crs_dv_pins: gpio::GPIO<CRS_DV_PORT, CRS_DV_PIN>,
-    mut rxd0_pins: gpio::GPIO<RXD0_PORT, RXD0_PIN>,
-    mut rxd1_pins: gpio::GPIO<RXD1_PORT, RXD1_PIN>,
-    mut tx_en_pins: gpio::GPIO<TX_EN_PORT, TX_EN_PIN>,
-    mut txd0_pins: gpio::GPIO<TXD0_PORT, TXD0_PIN>,
-    mut txd1_pins: gpio::GPIO<TXD1_PORT, TXD1_PIN>,
+    clocks: &rcc::Rcc,
+    mut ref_clk_pins: gpio::Gpio<REF_CLK_PORT, REF_CLK_PIN>,
+    mut mdio_pins: gpio::Gpio<MDIO_PORT, MDIO_PIN>,
+    mut mdc_pins: gpio::Gpio<MDC_PORT, MDC_PIN>,
+    mut crs_dv_pins: gpio::Gpio<CRS_DV_PORT, CRS_DV_PIN>,
+    mut rxd0_pins: gpio::Gpio<RXD0_PORT, RXD0_PIN>,
+    mut rxd1_pins: gpio::Gpio<RXD1_PORT, RXD1_PIN>,
+    mut tx_en_pins: gpio::Gpio<TX_EN_PORT, TX_EN_PIN>,
+    mut txd0_pins: gpio::Gpio<TXD0_PORT, TXD0_PIN>,
+    mut txd1_pins: gpio::Gpio<TXD1_PORT, TXD1_PIN>,
 ) -> (EthernetDMA<TD, RD>, EthernetMAC) {
     ref_clk_pins.set_speed(gpio::Speed::VeryHigh);
     mdio_pins.set_speed(gpio::Speed::VeryHigh);
@@ -488,7 +488,7 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
     eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
-    clocks: &rcc::CoreClocks,
+    clocks: &rcc::Rcc,
 ) -> (EthernetDMA<TD, RD>, EthernetMAC) {
     // RCC
     {

@@ -283,7 +283,7 @@ macro_rules! make_pwm {
             pub fn get_duty(&self) -> $cntType {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
 
-                tim.ccr[$N as usize].read().ccr().bits()
+                // tim.ccr[$N as usize].read().ccr().bits()
             }
 
             pub fn get_max_duty(&self) -> $cntType {
@@ -306,7 +306,7 @@ macro_rules! make_pwm {
             pub fn set_duty(&mut self, duty: $cntType) {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
 
-                tim.ccr[$N as usize].write(|w| w.ccr().bits(duty));
+                // tim.ccr[$N as usize].write(|w| w.ccr().bits(duty));
             }
 
             pub fn ccer_enable(&mut self) {
@@ -341,46 +341,46 @@ macro_rules! make_pwm {
     }
 }
 
-make_pwm!(1, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(1, 2, ccmr1_output, oc2pe, oc2m, u16);
-make_pwm!(1, 3, ccmr2_output, oc3pe, oc3m, u16);
-make_pwm!(1, 4, ccmr2_output, oc4pe, oc4m, u16);
+// make_pwm!(1, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(1, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(1, 3, ccmr2_output, oc3pe, oc3m, u16);
+// make_pwm!(1, 4, ccmr2_output, oc4pe, oc4m, u16);
 
-make_pwm!(2, 1, ccmr1_output, oc1pe, oc1m, u32);
-make_pwm!(2, 2, ccmr1_output, oc2pe, oc2m, u32);
-make_pwm!(2, 3, ccmr2_output, oc3pe, oc3m, u32);
-make_pwm!(2, 4, ccmr2_output, oc4pe, oc4m, u32);
+// make_pwm!(2, 1, ccmr1_output, oc1pe, oc1m, u32);
+// make_pwm!(2, 2, ccmr1_output, oc2pe, oc2m, u32);
+// make_pwm!(2, 3, ccmr2_output, oc3pe, oc3m, u32);
+// make_pwm!(2, 4, ccmr2_output, oc4pe, oc4m, u32);
 
-make_pwm!(3, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(3, 2, ccmr1_output, oc2pe, oc2m, u16);
-make_pwm!(3, 3, ccmr2_output, oc3pe, oc3m, u16);
-make_pwm!(3, 4, ccmr2_output, oc4pe, oc4m, u16);
+// make_pwm!(3, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(3, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(3, 3, ccmr2_output, oc3pe, oc3m, u16);
+// make_pwm!(3, 4, ccmr2_output, oc4pe, oc4m, u16);
 
-make_pwm!(4, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(4, 2, ccmr1_output, oc2pe, oc2m, u16);
-make_pwm!(4, 3, ccmr2_output, oc3pe, oc3m, u16);
-make_pwm!(4, 4, ccmr2_output, oc4pe, oc4m, u16);
+// make_pwm!(4, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(4, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(4, 3, ccmr2_output, oc3pe, oc3m, u16);
+// make_pwm!(4, 4, ccmr2_output, oc4pe, oc4m, u16);
 
-make_pwm!(5, 1, ccmr1_output, oc1pe, oc1m, u32);
-make_pwm!(5, 2, ccmr1_output, oc2pe, oc2m, u32);
-make_pwm!(5, 3, ccmr2_output, oc3pe, oc3m, u32);
-make_pwm!(5, 4, ccmr2_output, oc4pe, oc4m, u32);
+// make_pwm!(5, 1, ccmr1_output, oc1pe, oc1m, u32);
+// make_pwm!(5, 2, ccmr1_output, oc2pe, oc2m, u32);
+// make_pwm!(5, 3, ccmr2_output, oc3pe, oc3m, u32);
+// make_pwm!(5, 4, ccmr2_output, oc4pe, oc4m, u32);
 
-make_pwm!(8, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(8, 2, ccmr1_output, oc2pe, oc2m, u16);
-make_pwm!(8, 3, ccmr2_output, oc3pe, oc3m, u16);
-make_pwm!(8, 4, ccmr2_output, oc4pe, oc4m, u16);
+// make_pwm!(8, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(8, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(8, 3, ccmr2_output, oc3pe, oc3m, u16);
+// make_pwm!(8, 4, ccmr2_output, oc4pe, oc4m, u16);
 
-make_pwm!(12, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(12, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(12, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(12, 2, ccmr1_output, oc2pe, oc2m, u16);
 
-make_pwm!(13, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(13, 1, ccmr1_output, oc1pe, oc1m, u16);
 
-make_pwm!(14, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(14, 1, ccmr1_output, oc1pe, oc1m, u16);
 
-make_pwm!(15, 1, ccmr1_output, oc1pe, oc1m, u16);
-make_pwm!(15, 2, ccmr1_output, oc2pe, oc2m, u16);
+// make_pwm!(15, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(15, 2, ccmr1_output, oc2pe, oc2m, u16);
 
-make_pwm!(16, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(16, 1, ccmr1_output, oc1pe, oc1m, u16);
 
-make_pwm!(17, 1, ccmr1_output, oc1pe, oc1m, u16);
+// make_pwm!(17, 1, ccmr1_output, oc1pe, oc1m, u16);

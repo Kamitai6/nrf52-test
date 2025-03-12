@@ -262,9 +262,9 @@ impl<const N: u8> Spi<N> {
         const MISO_PORT: char, const MISO_PIN: u8, 
         const MOSI_PORT: char, const MOSI_PIN: u8
     >(
-        sck: gpio::GPIO<SCK_PORT, SCK_PIN>, 
-        miso: gpio::GPIO<MISO_PORT, MISO_PIN>, 
-        mosi: gpio::GPIO<MOSI_PORT, MOSI_PIN>, 
+        sck: gpio::Gpio<SCK_PORT, SCK_PIN>, 
+        miso: gpio::Gpio<MISO_PORT, MISO_PIN>, 
+        mosi: gpio::Gpio<MOSI_PORT, MOSI_PIN>, 
         cfg: SpiConfig
     ) -> Self {
         let _ = Self::CHECK;

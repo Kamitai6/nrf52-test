@@ -18,7 +18,7 @@ use crate::{pac, rcc_en_reset};
 mod constants {
     pub const VREFINT_ADDR: u32 = 0x1FF1_E860;
     pub const VREFINT_VOLTAGE: f32 = 3.3;
-    pub const VREFINT_CH: u8 = 0; // todo: Unknown. What is it?
+    pub const VREFINT_CH: u8 = 1; // todo: Unknown. What is it?
     pub const MAX_ADVREGEN_STARTUP_US: u32 = 10;
 }
 
@@ -380,7 +380,7 @@ impl<const N: u8> Adc<N> {
     const CHECK: () = {
         assert!(1 <= N && N <= 3, "Adc must be 1 - 3.");
     };
-    pub fn init<const PORT: char, const PIN: u8>(adc_pin: gpio::GPIO<PORT, PIN>, cfg: Config) -> Self {
+    pub fn init<const PORT: char, const PIN: u8>(adc_pin: gpio::Gpio<PORT, PIN>, cfg: Config) -> Self {
         let _ = Self::CHECK;
 
         assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
@@ -734,7 +734,7 @@ impl<const N: u8> Adc<N> {
         // self.disable();
         // while periph.cr.read().adstart().bit_is_set() || periph.cr.read().jadstart().bit_is_set() {}
 
-        let channel_u8 = channel as u8;
+        let channel_u8 = channel as u8 - 1;
 
         if channel_u8 < 10 {
             periph.smpr1.modify(|r, w| unsafe {

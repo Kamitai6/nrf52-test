@@ -57,5 +57,5 @@ impl U32Ext for u32 {
     }
 }
 
-pub mod other;
+pub mod plugin;
 pub mod periph;
