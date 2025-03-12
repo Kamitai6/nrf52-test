@@ -50,13 +50,21 @@ fn main() -> ! {
     };
     let clock = rcc::Rcc::init(pwr, rcc_config);
 
+    let mut pd0 = gpio::PD::<0>::init(gpio::PinMode::Output(gpio::OutputType::PushPull), &clock);
+    pd0.set_high();
+    
     let pb1 = gpio::PB::<1>::init(gpio::PinMode::Analog, &clock);
     let adc1_cfg = adc::Config {
+        ahb_freq: clock.hclk.raw(),
         ..Default::default()
     };
     let mut adc1 = adc::Adc::<1>::init(pb1, adc1_cfg);
 
     loop {
+        adc1.delay_us(1000000);
+        pd0.set_low();
+        adc1.delay_us(1000000);
+        pd0.set_high();
         rprintln!("adc1: {}", adc1.read(adc::Channel::C5));
     }
 }
