@@ -130,8 +130,13 @@ macro_rules! make_timer {
                 channel_tuple!($N, $ChN)
             }
 
-            pub fn start(mut self, value: Hertz) {
+            pub fn start(&mut self, value: Hertz) {
                 self.pause();
+
+                match self.count_mode {
+                    CountMode::Loop => {},
+                    CountMode::Interrupt => self.reset_counter(),
+                }
 
                 // UEV event occours on next overflow
                 self.urs_counter_only();
@@ -161,7 +166,7 @@ macro_rules! make_timer {
 
             /// Configures the timer's frequency and counter reload value
             /// so that it underflows at the timeout's frequency
-            pub fn set_timeout_interval(&mut self, timeout: Hertz) {
+            fn set_timeout_interval(&mut self, timeout: Hertz) {
                 let ticks = self.clock / timeout.raw();
 
                 self.set_timeout_ticks(ticks);
@@ -213,11 +218,11 @@ macro_rules! make_timer {
             /// Counts from 0 to the counter's maximum value, then repeats.
             /// Because this only uses the timer prescaler, the frequency
             /// is rounded to a multiple of the timer's kernel clock.
-            pub fn set_stopwatch_frequency(&mut self, frequency: Hertz) {
+            fn set_stopwatch_frequency(&mut self, frequency: Hertz) {
                 let regs = unsafe { &(*pac::[<TIM $N>]::ptr()) };
                 let div = self.clock / frequency.raw();
 
-                let psc = u16::try_from(div - 1).expect("div - 1 is overflow");
+                let psc = (div - 1) as u16;
                 regs.psc.write(|w| w.psc().bits(psc));
 
                 let counter_max = u32::from($cntType::MAX);
@@ -230,19 +235,19 @@ macro_rules! make_timer {
             /// The timer will normally update its prescaler and auto-reload
             /// value when its counter overflows. This function causes
             /// those changes to happen immediately. Also clears the counter.
-            pub fn apply_freq(&mut self) {
+            fn apply_freq(&mut self) {
                 let regs = unsafe { &(*pac::[<TIM $N>]::ptr()) };
                 regs.egr.write(|w| w.ug().set_bit());
             }
 
             /// Pauses the TIM peripheral
-            pub fn pause(&mut self) {
+            fn pause(&mut self) {
                 let regs = unsafe { &(*pac::[<TIM $N>]::ptr()) };
                 regs.cr1.modify(|_, w| w.cen().clear_bit());
             }
 
             /// Resume (unpause) the TIM peripheral
-            pub fn resume(&mut self) {
+            fn resume(&mut self) {
                 let regs = unsafe { &(*pac::[<TIM $N>]::ptr()) };
                 regs.cr1.modify(|_, w| w.cen().set_bit());
             }
