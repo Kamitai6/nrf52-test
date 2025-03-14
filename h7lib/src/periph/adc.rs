@@ -6,8 +6,7 @@
 use core::ptr;
 use cortex_m::{asm, delay::Delay};
 
-use super::dma;
-use super::gpio;
+use super::{dma, gpio, rcc};
 use crate::{pac, rcc_en_reset};
 
 // Address of the ADCinterval voltage reference. This address is found in the User manual. It appears
@@ -350,8 +349,6 @@ pub struct Config {
     pub cal_single_ended: Option<u16>,
     /// Optional calibration data for differential measurements.
     pub cal_differential: Option<u16>,
-
-    pub ahb_freq: u32,
 }
 
 impl Default for Config {
@@ -363,7 +360,6 @@ impl Default for Config {
             operation_mode: OperationMode::OneShot,
             cal_single_ended: None,
             cal_differential: None,
-            ahb_freq: 0,
         }
     }
 }
@@ -371,6 +367,7 @@ impl Default for Config {
 pub struct Adc<const N: u8> {
     pub cfg: Config,
     pub vdda_calibrated: f32,
+    ahb_freq: u32,
 
     periph_regs_ptr: *const pac::adc3::RegisterBlock,
     common_regs_ptr: *const pac::adc3_common::RegisterBlock,
@@ -380,7 +377,7 @@ impl<const N: u8> Adc<N> {
     const CHECK: () = {
         assert!(1 <= N && N <= 3, "Adc must be 1 - 3.");
     };
-    pub fn init<const PORT: char, const PIN: u8>(adc_pin: gpio::Gpio<PORT, PIN>, cfg: Config) -> Self {
+    pub fn init<const PORT: char, const PIN: u8>(adc_pin: gpio::Gpio<PORT, PIN>, cfg: Config, clock: &rcc::Rcc) -> Self {
         let _ = Self::CHECK;
 
         assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
@@ -427,7 +424,8 @@ impl<const N: u8> Adc<N> {
             periph_regs_ptr,
             common_regs_ptr,
             cfg,
-            vdda_calibrated: 0.
+            vdda_calibrated: 0.,
+            ahb_freq: clock.sys_ck.raw(),
         };
         
         let rcc = unsafe { &(*pac::RCC::ptr()) };
@@ -583,7 +581,9 @@ impl<const N: u8> Adc<N> {
     }
 
     fn wait_advregen_startup(&self) {
-        self.delay_us(constants::MAX_ADVREGEN_STARTUP_US);
+        let cp = unsafe { cortex_m::Peripherals::steal() };
+        let mut delay = Delay::new(cp.SYST, self.ahb_freq);
+        delay.delay_us(constants::MAX_ADVREGEN_STARTUP_US);
     }
 
     /// Calibrate. See L4 RM, 16.5.8, or F404 RM, section 15.3.8.
@@ -815,7 +815,9 @@ impl<const N: u8> Adc<N> {
 
             // todo: Not sure what to set this delay to and how to change it based on variant, so picking
             // todo something conservative.
-            self.delay_us(100);
+            let cp = unsafe { cortex_m::Peripherals::steal() };
+            let mut delay = Delay::new(cp.SYST, self.ahb_freq);
+            delay.delay_us(100);
 
             // This sample time is overkill.
             // Note that you will need to reset the sample time if you use this channel on this
@@ -1053,12 +1055,5 @@ impl<const N: u8> Adc<N> {
         //     AdcInterrupt::Overrun => self.regs.icr.write(|_w| w.ovr().set_bit()),
         //     AdcInterrupt::InjectedOverflow => self.regs.icr.write(|_w| w.jqovf().set_bit()),
         // }
-    }
-
-    /// A blocking delay, for a specified time in μs.
-    pub fn delay_us(&self, num_us: u32) {
-        let cp = unsafe { cortex_m::Peripherals::steal() };
-        let mut delay = Delay::new(cp.SYST, self.cfg.ahb_freq);
-        delay.delay_us(num_us);
     }
 }

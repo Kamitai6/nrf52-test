@@ -115,12 +115,12 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
         match mode {
             PinMode::Output(outtype) => {
                 regs.otyper.modify(|r, w| unsafe {
-                    w.bits(r.bits() & !(0b1 << PIN) | u32::from((outtype as u8) << PIN))
+                    w.bits(r.bits() & !(0b1 << PIN) | u32::from(outtype as u8) << PIN)
                 });
             }
             PinMode::AltFn(af, outtype) => {
                 regs.otyper.modify(|r, w| unsafe {
-                    w.bits(r.bits() & !(0b1 << PIN) | u32::from((outtype as u8) << PIN))
+                    w.bits(r.bits() & !(0b1 << PIN) | u32::from(outtype as u8) << PIN)
                 });
 
                 if PIN < 8 {
@@ -128,7 +128,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
                     regs.afrl.modify(|r, w| unsafe {
                         w.bits(
                             (r.bits() & !(0b1111 << offset))
-                                | u32::from(af << offset),
+                                | u32::from(af) << offset,
                         )
                     });
                 } else {
@@ -136,7 +136,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
                     regs.afrh.modify(|r, w| unsafe {
                         w.bits(
                             (r.bits() & !(0b1111 << offset))
-                                | u32::from(af << offset),
+                                | u32::from(af) << offset,
                         )
                     });
                 }
@@ -147,7 +147,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
         let offset = 2 * PIN;
         regs.moder.modify(|r, w| unsafe {
             w.bits(
-                (r.bits() & !(0b11 << offset)) | u32::from(mode.val() << offset),
+                (r.bits() & !(0b11 << offset)) | u32::from(mode.val()) << offset,
             )
         });
 
@@ -179,7 +179,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
         let offset = 2 * PIN;
         unsafe {
             regs.pupdr.modify(|r, w| {
-                w.bits((r.bits() & !(0b11 << offset)) | u32::from((pull as u8) << offset))
+                w.bits((r.bits() & !(0b11 << offset)) | u32::from(pull as u8) << offset)
             });
         }
     }

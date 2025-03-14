@@ -41,20 +41,31 @@ pub use fugit::{
     MicrosDurationU32 as MicroSeconds, MillisDurationU32 as MilliSeconds,
     NanosDurationU32 as NanoSeconds,
 };
-
+pub use fugit::{ExtU32 as _, RateExtU32 as _};
 /// Bits per second
 pub type Bps = Hertz;
-
 /// Extension trait that adds convenience methods to the `u32` type
 pub trait U32Ext {
     /// Wrap in `Bps`
     fn bps(self) -> Bps;
 }
-
 impl U32Ext for u32 {
     fn bps(self) -> Bps {
         Bps::from_raw(self)
     }
+}
+
+use cortex_m::{delay::Delay};
+use crate::periph::rcc;
+pub fn delay_us(clock: &rcc::Rcc, num: u32) {
+    let cp = unsafe { cortex_m::Peripherals::steal() };
+    let mut delay = Delay::new(cp.SYST, clock.sys_ck.raw());
+    delay.delay_us(num);
+}
+pub fn delay_ms(clock: &rcc::Rcc, num: u32) {
+    let cp = unsafe { cortex_m::Peripherals::steal() };
+    let mut delay = Delay::new(cp.SYST, clock.sys_ck.raw());
+    delay.delay_ms(num);
 }
 
 pub mod plugin;

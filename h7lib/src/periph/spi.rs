@@ -244,7 +244,7 @@ impl Default for SpiConfig {
 
 // Depth of FIFO to use. See RM0433 Rev 7, Table 409. Note that 16 is acceptable on this MCU,
 // for SPI 1-3
-const FIFO_LEN: u8 = 8;
+const FIFO_LEN: u8 = 4;
 
 pub struct Spi<const N: u8> {
     regs_ptr: *const pac::spi1::RegisterBlock,
@@ -269,11 +269,11 @@ impl<const N: u8> Spi<N> {
     ) -> Self {
         let _ = Self::CHECK;
 
-        assert!(
-            matches!(sck.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)) && 
-            matches!(miso.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)) && 
-            matches!(mosi.mode, gpio::PinMode::AltFn(5, gpio::OutputType::PushPull)), "Mode is not AltFn 5 push-pull"
-        );
+        // assert!(
+        //     matches!(sck.mode, gpio::PinMode::AltFn(6, gpio::OutputType::PushPull)) && 
+        //     matches!(miso.mode, gpio::PinMode::AltFn(6, gpio::OutputType::PushPull)) && 
+        //     matches!(mosi.mode, gpio::PinMode::AltFn(6, gpio::OutputType::PushPull)), "Mode is not AltFn 5 push-pull"
+        // );
 
         assert!(
             match N {
@@ -373,7 +373,7 @@ impl<const N: u8> Spi<N> {
 
             periph.cfg1.modify(|_, w| {
             w.mbr().bits(cfg.baud_rate as u8);
-            w.dsize().bits((cfg.data_size as u8) - 1);
+            w.dsize().bits(cfg.data_size as u8);
             w.crcen().clear_bit()
         });
 
@@ -518,15 +518,15 @@ impl<const N: u8> Spi<N> {
     }
 
     /// Read multiple bytes to a buffer, blocking until complete.
-    pub fn transfer(&mut self, words: &mut [u8]) -> Result<(), Error> {
+    pub fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Error> {
         if words.is_empty() {
-            return Ok(());
+            return Ok(words);
         }
 
         // Fill the first half of the write FIFO
         let len = words.len() as u8;
         for i in 0..core::cmp::min(FIFO_LEN, len) {
-            self.send(words[i as usize]).unwrap();
+            self.send(words[i as usize])?;
         }
 
         for i in FIFO_LEN..len + FIFO_LEN {
@@ -541,7 +541,7 @@ impl<const N: u8> Spi<N> {
             }
         }
 
-        Ok(())
+        Ok(words)
     }
 
     fn send(&mut self, word: u8) -> Result<(), Error> {

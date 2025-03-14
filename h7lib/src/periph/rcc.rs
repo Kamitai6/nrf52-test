@@ -1,4 +1,4 @@
-use crate::{pac, Hertz};
+use crate::*;
 
 use crate::pac::rcc::cfgr::SW_A as SW;
 use crate::pac::rcc::cfgr::TIMPRE_A as TIMPRE;
@@ -34,10 +34,10 @@ pub enum PllConfigStrategy {
 
 /// Configuration of a Phase Locked Loop (PLL)
 pub struct PllConfig {
-    pub(super) strategy: PllConfigStrategy,
-    pub(super) p_ck: Option<u32>,
-    pub(super) q_ck: Option<u32>,
-    pub(super) r_ck: Option<u32>,
+    pub strategy: PllConfigStrategy,
+    pub p_ck: Option<Hertz>,
+    pub q_ck: Option<Hertz>,
+    pub r_ck: Option<Hertz>,
 }
 impl Default for PllConfig {
     fn default() -> PllConfig {
@@ -84,15 +84,15 @@ pub enum ResetReason {
 
 /// Configuration of the core clocks
 pub struct Config {
-    pub hse: Option<u32>,
+    pub hse: Option<Hertz>,
     pub bypass_hse: bool,
-    pub sys_ck: Option<u32>,
-    pub per_ck: Option<u32>,
-    pub rcc_hclk: Option<u32>,
-    pub rcc_pclk1: Option<u32>,
-    pub rcc_pclk2: Option<u32>,
-    pub rcc_pclk3: Option<u32>,
-    pub rcc_pclk4: Option<u32>,
+    pub sys_ck: Option<Hertz>,
+    pub per_ck: Option<Hertz>,
+    pub rcc_hclk: Option<Hertz>,
+    pub rcc_pclk1: Option<Hertz>,
+    pub rcc_pclk2: Option<Hertz>,
+    pub rcc_pclk3: Option<Hertz>,
+    pub rcc_pclk4: Option<Hertz>,
     pub pll1: PllConfig,
     pub pll2: PllConfig,
     pub pll3: PllConfig,
@@ -103,7 +103,7 @@ impl Default for Config {
         Self {
             hse: None,
             bypass_hse: false,
-            sys_ck: None,
+            sys_ck: Some(100.MHz()),
             per_ck: None,
             rcc_hclk: None,
             rcc_pclk1: None,
@@ -202,7 +202,7 @@ impl Rcc {
             match (config.per_ck == config.hse, config.per_ck) {
                 (true, Some(hse)) => (hse, CKPERSEL::Hse), // HSE
                 (_, Some(csi)) => (csi, CKPERSEL::Csi),    // CSI
-                _ => (hsi, CKPERSEL::Hsi),                 // HSI
+                _ => (hsi.Hz(), CKPERSEL::Hsi),                 // HSI
             };
 
         // D1 Core Prescaler
@@ -228,7 +228,7 @@ impl Rcc {
         assert!(sys_d1cpre_ck <= sys_d1cpre_ck_max);
 
         // Get AHB clock or sensible default
-        let rcc_hclk = config.rcc_hclk.unwrap_or(sys_d1cpre_ck / 2);
+        let rcc_hclk = config.rcc_hclk.map(|rate| rate.raw()).unwrap_or(sys_d1cpre_ck / 2);
 
         assert!(rcc_hclk <= rcc_hclk_max);
 
@@ -255,6 +255,7 @@ impl Rcc {
         // Get intended rcc_pclk1 frequency
             let rcc_pclk1: u32 = config
             .rcc_pclk1
+            .map(|rate| rate.raw())
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
             // Calculate suitable divider
@@ -285,6 +286,7 @@ impl Rcc {
             // Get intended rcc_pclk2 frequency
             let rcc_pclk2: u32 = config
             .rcc_pclk2
+            .map(|rate| rate.raw())
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
             // Calculate suitable divider
@@ -315,6 +317,7 @@ impl Rcc {
             // Get intended rcc_pclk3 frequency
             let rcc_pclk3: u32 = config
             .rcc_pclk3
+            .map(|rate| rate.raw())
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
             // Calculate suitable divider
@@ -336,6 +339,7 @@ impl Rcc {
             // Get intended rcc_pclk4 frequency
             let rcc_pclk4: u32 = config
             .rcc_pclk4
+            .map(|rate| rate.raw())
             .unwrap_or_else(|| core::cmp::min(pclk_max, rcc_hclk / 2));
 
             // Calculate suitable divider
@@ -376,7 +380,7 @@ impl Rcc {
                 });
                 while rcc.cr.read().hserdy().is_not_ready() {}
 
-                Some(Hertz::from_raw(hse))
+                Some(hse)
             }
             None => None,
         };
@@ -466,20 +470,20 @@ impl Rcc {
 
         // Return frozen clock configuration
         Self {
-            hclk: Hertz::from_raw(rcc_hclk),
-            pclk1: Hertz::from_raw(rcc_pclk1),
-            pclk2: Hertz::from_raw(rcc_pclk2),
-            pclk3: Hertz::from_raw(rcc_pclk3),
-            pclk4: Hertz::from_raw(rcc_pclk4),
+            hclk: rcc_hclk.Hz(),
+            pclk1: rcc_pclk1.Hz(),
+            pclk2: rcc_pclk2.Hz(),
+            pclk3: rcc_pclk3.Hz(),
+            pclk4: rcc_pclk4.Hz(),
             ppre1,
             ppre2,
             ppre3,
             ppre4,
-            csi_ck: Some(Hertz::from_raw(csi)),
-            hsi_ck: Some(Hertz::from_raw(hsi)),
-            hsi48_ck: Some(Hertz::from_raw(hsi48)),
-            lsi_ck: Some(Hertz::from_raw(lsi)),
-            per_ck: Some(Hertz::from_raw(per_ck)),
+            csi_ck: Some(csi.Hz()),
+            hsi_ck: Some(hsi.Hz()),
+            hsi48_ck: Some(hsi48.Hz()),
+            lsi_ck: Some(lsi.Hz()),
+            per_ck: Some(per_ck),
             hse_ck,
             pll1_p_ck,
             pll1_q_ck,
@@ -490,10 +494,10 @@ impl Rcc {
             pll3_p_ck,
             pll3_q_ck,
             pll3_r_ck,
-            timx_ker_ck: Hertz::from_raw(rcc_timx_ker_ck),
-            timy_ker_ck: Hertz::from_raw(rcc_timy_ker_ck),
+            timx_ker_ck: rcc_timx_ker_ck.Hz(),
+            timy_ker_ck: rcc_timy_ker_ck.Hz(),
             sys_ck,
-            c_ck: Hertz::from_raw(sys_d1cpre_ck),
+            c_ck: sys_d1cpre_ck.Hz(),
         }
     }
 
@@ -642,14 +646,14 @@ impl Rcc {
 
         let rcc = unsafe { &(*pac::RCC::ptr()) };
         // PLLの入力クロック（HSI または HSE）
-        let pllsrc = config.hse.unwrap_or(constants::HSI);
+        let pllsrc = config.hse.map(|rate| rate.raw()).unwrap_or(constants::HSI);
         assert!(pllsrc > 0);
     
         if let Some(output) = pll.p_ck.or(pll.q_ck.or(pll.r_ck)) {
             let (ref_x_ck, pll_x_m, pll_x, vco_ck_target) = if N == 1 {
-                Self::vco_setup::<N>(pll.strategy, pllsrc, output)
+                Self::vco_setup::<N>(pll.strategy, pllsrc, output.raw())
             } else {
-                Self::vco_setup::<N>(pll.strategy, pllsrc, output)
+                Self::vco_setup::<N>(pll.strategy, pllsrc, output.raw())
             };
     
             let pll_x_n = vco_ck_target / ref_x_ck;
@@ -673,7 +677,7 @@ impl Rcc {
             
             let vco_ck = match pll.strategy {
                 PllConfigStrategy::Fractional => {
-                    let pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                    let pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output.raw() as f32);
                     match N {
                         1 => {
                             rcc.pll1fracr.modify(|_, w| {w.fracn1().bits(pll_x_fracn)});
@@ -692,7 +696,7 @@ impl Rcc {
                     (ref_x_ck as f32 * (pll_x_n as f32 + (pll_x_fracn as f32 / constants::FRACN_DIVISOR))) as u32
                 },
                 PllConfigStrategy::FractionalNotLess => {
-                    let mut pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                    let mut pll_x_fracn = Self::calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output.raw() as f32);
                     pll_x_fracn += 1;
                     match N {
                         1 => {
@@ -722,8 +726,8 @@ impl Rcc {
                 },
             };
     
-            let pll_x_q = pll.q_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
-            let pll_x_r = pll.r_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck)).unwrap_or(0);
+            let pll_x_q = pll.q_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck.raw())).unwrap_or(0);
+            let pll_x_r = pll.r_ck.map(|ck| Self::calc_ck_div(pll.strategy, vco_ck, ck.raw())).unwrap_or(0);
     
             let dividers = (pll_x, pll_x_q, pll_x_r);
     
@@ -948,8 +952,8 @@ impl Rcc {
     /// Returns sys_ck frequency, and a pll1_p_ck
     fn sys_ck_setup(config: &mut Config) -> (Hertz, bool) {
         // Compare available with wanted clocks
-        let srcclk = config.hse.unwrap_or(constants::HSI); // Available clocks
-        let sys_ck = config.sys_ck.unwrap_or(srcclk);
+        let srcclk = config.hse.map(|rate| rate.raw()).unwrap_or(constants::HSI); // Available clocks
+        let sys_ck = config.sys_ck.map(|rate| rate.raw()).unwrap_or(srcclk);
 
         if sys_ck != srcclk {
             // The requested system clock is not the immediately available
@@ -960,19 +964,19 @@ impl Rcc {
             // Therefore we must use pll1_p_ck
             let pll1_p_ck = match config.pll1.p_ck {
                 Some(p_ck) => {
-                    assert!(p_ck == sys_ck,
+                    assert!(p_ck.raw() == sys_ck,
                             "Error: Cannot set pll1_p_ck independently as it must be used to generate sys_ck");
                     Some(p_ck)
                 }
-                None => Some(sys_ck),
+                None => Some(sys_ck.Hz()),
             };
             config.pll1.p_ck = pll1_p_ck;
 
-            (Hertz::from_raw(sys_ck), true)
+            (sys_ck.Hz(), true)
         } else {
             // sys_ck is derived directly from a source clock
             // (HSE/HSI). pll1_p_ck can be as requested
-            (Hertz::from_raw(sys_ck), false)
+            (sys_ck.Hz(), false)
         }
     }
 
