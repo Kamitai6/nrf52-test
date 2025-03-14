@@ -37,9 +37,10 @@ pub enum Alignment {
 }
 
 pub struct ChannelOption {
-    polarity: Polarity,
-    alignment: Option<Alignment>,
-    deadtime: Option<NanoSeconds>,
+    pub frequency: Hertz,
+    pub polarity: Polarity,
+    pub alignment: Option<Alignment>,
+    pub deadtime: Option<NanoSeconds>,
 }
 
 /// Timer channel
@@ -86,9 +87,9 @@ macro_rules! make_timer {
                 let base_freq = self.clock;
                 
                 let divisor = if let Some(Alignment::Center) = option.alignment {
-                    base_freq * 2
+                    option.frequency.raw() * 2
                 } else {
-                    base_freq
+                    option.frequency.raw()
                 };
 
                 // Round to the nearest period

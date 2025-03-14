@@ -14,50 +14,43 @@ use pac::interrupt;
 
 use h7lib::*;
 use periph::{pwr, rcc, gpio, adc, spi, timer};
+use plugin::pwm;
 
-static OVERFLOWS: AtomicU32 = AtomicU32::new(0);
+// static OVERFLOWS: AtomicU32 = AtomicU32::new(0);
 
-static TIMER: Mutex<RefCell<Option<timer::Timer<2>>>> =
-    Mutex::new(RefCell::new(None));
+// static TIMER: Mutex<RefCell<Option<timer::Timer<2>>>> =
+//     Mutex::new(RefCell::new(None));
 
-fn transfer_spi<const NSS_PORT: char, const NSS_PIN: u8, 
-    const SPI_N: u8
->(
-    rw: bool, nss: &mut gpio::Gpio<NSS_PORT, NSS_PIN>, 
-    spi: &mut spi::Spi<SPI_N>, spi_buffer: &mut [u8])
-{
-    nss.set_low();
-    if rw {
-        let result = spi.transfer(spi_buffer);
-        match result {
-            Ok(values) => {
-                for (i, &value) in values.iter().enumerate() {
-                    rprintln!("Received data {}: {:#010b}", i, value);
-                    // rprintln!("Received data {}: {:#018b}", i, value);
-                }
-            }
-            Err(e) => rprintln!("Error {:?}", e),
-        }
-    }
-    else {
-        let _ = spi.write(spi_buffer);
-    }
+// fn transfer_spi<const NSS_PORT: char, const NSS_PIN: u8, 
+//     const SPI_N: u8
+// >(
+//     rw: bool, nss: &mut gpio::Gpio<NSS_PORT, NSS_PIN>, 
+//     spi: &mut spi::Spi<SPI_N>, spi_buffer: &mut [u8])
+// {
+//     nss.set_low();
+//     if rw {
+//         let result = spi.transfer(spi_buffer);
+//         match result {
+//             Ok(values) => {
+//                 for (i, &value) in values.iter().enumerate() {
+//                     rprintln!("Received data {}: {:#010b}", i, value);
+//                     // rprintln!("Received data {}: {:#018b}", i, value);
+//                 }
+//             }
+//             Err(e) => rprintln!("Error {:?}", e),
+//         }
+//     }
+//     else {
+//         let _ = spi.write(spi_buffer);
+//     }
     
-    nss.set_high();
-}
+//     nss.set_high();
+// }
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    // let (mut t1control, (t1c1, t1c2, t1c3)) = dp.TIM1.pwm_advanced(
-    //     (
-    //         gpioe.pe9.into_alternate(),
-    //         gpioe.pe11.into_alternate(),
-    //         gpioe.pe13.into_alternate(),
-    //     ),
-    //     ccdr.peripheral.TIM1,
-    //     &ccdr.clocks,
-    // )
+    
     let pwr_config = pwr::PwrConfig {
         ..Default::default()
     };
@@ -149,43 +142,70 @@ fn main() -> ! {
     // };
     // let mut adc1 = adc::Adc::<1>::init(pb1, adc1_cfg, &clock);
 
-    let mut tim2 = timer::Timer::<2>::init(timer::CountMode::Interrupt, &clock);
+    let tim1 = timer::Timer::<1>::init(timer::CountMode::Loop, &clock);
+    let ch_option = timer::ChannelOption {
+        frequency: 10.kHz(),
+        polarity: timer::Polarity::ActiveLow,
+        alignment: Some(timer::Alignment::Center),
+        deadtime: Some(1.micros()),
+    };
+    let (ch1, ch2, ch3, ch4) = tim1.split(ch_option);
+    let pe9 = gpio::PE::<9>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let pe11 = gpio::PE::<11>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let pe13 = gpio::PE::<13>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let pe8 = gpio::PE::<8>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let pe10 = gpio::PE::<10>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let pe12 = gpio::PE::<12>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    let mut pwm1 = pwm::Pwm::<1, 1>::new_with_comp(ch1, pe9, pe8);
+    let mut pwm2 = pwm::Pwm::<1, 2>::new_with_comp(ch2, pe11, pe10);
+    let mut pwm3 = pwm::Pwm::<1, 3>::new_with_comp(ch3, pe13, pe12);
+    
 
-    tim2.start(10.Hz());
-    tim2.listen();
+    pwm1.set_duty(pwm1.get_max_duty() / 2);
+    pwm2.set_duty(pwm2.get_max_duty() / 2);
+    pwm3.set_duty(pwm3.get_max_duty() / 2);
 
-    cortex_m::interrupt::free(|cs| {
-        TIMER.borrow(cs).replace(Some(tim2));
-    });
+    pwm1.enable();
+    pwm2.enable();
+    pwm3.enable();
 
-    unsafe {
-        // cp.NVIC.set_priority(pac::interrupt::TIM2, 0);
-        pac::NVIC::unmask(pac::interrupt::TIM2);
-    }
+    // let mut tim2 = timer::Timer::<2>::init(timer::CountMode::Interrupt, &clock);
+
+    // tim2.start(10.Hz());
+    // tim2.listen();
+
+    // cortex_m::interrupt::free(|cs| {
+    //     TIMER.borrow(cs).replace(Some(tim2));
+    // });
+
+    // unsafe {
+    //     // cp.NVIC.set_priority(pac::interrupt::TIM2, 0);
+    //     pac::NVIC::unmask(pac::interrupt::TIM2);
+    // }
 
     loop {
-        let ctr = cortex_m::interrupt::free(|cs| {
-            let rc = TIMER.borrow(cs).borrow();
-            let timer = rc.as_ref().unwrap();
-            timer.counter() as u64
-        });
-        rprintln!("count{}", ctr);
+        // let ctr = cortex_m::interrupt::free(|cs| {
+        //     let rc = TIMER.borrow(cs).borrow();
+        //     let timer = rc.as_ref().unwrap();
+        //     timer.counter() as u64
+        // });
+        // rprintln!("count{}", ctr);
+        // rprintln!("overflows: {}", OVERFLOWS.load(Ordering::SeqCst) as u64);
         // delay_ms(&clock, 1000);
         // led.set_low();
         // delay_ms(&clock, 1000);
         // led.set_high();
         // // rprintln!("adc1: {}", adc1.read(adc::Channel::C5));
-        rprintln!("overflows: {}", OVERFLOWS.load(Ordering::SeqCst) as u64);
     }
 }
 
-#[interrupt]
-fn TIM2() {
-    OVERFLOWS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+// #[interrupt]
+// fn TIM2() {
+//     OVERFLOWS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
 
-    cortex_m::interrupt::free(|cs| {
-        let mut rc = TIMER.borrow(cs).borrow_mut();
-        let timer = rc.as_mut().unwrap();
-        timer.clear_irq();
-    })
-}
+//     cortex_m::interrupt::free(|cs| {
+//         let mut rc = TIMER.borrow(cs).borrow_mut();
+//         let timer = rc.as_mut().unwrap();
+//         timer.clear_irq();
+//     })
+// }
