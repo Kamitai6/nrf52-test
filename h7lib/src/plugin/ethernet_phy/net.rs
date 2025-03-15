@@ -1,11 +1,11 @@
 use core::mem::MaybeUninit;
 
-use stm32h7xx_hal::{ethernet::smoltcp};
+use crate::periph::{ethernet::smoltcp};
 use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
 use smoltcp::time::Instant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
 
-use stm32h7xx_hal::{ethernet};
+use crate::periph::{ethernet};
 
 /// Ethernet descriptor rings are a global singleton
 #[link_section = ".sram3.eth"]

@@ -1,6 +1,6 @@
 //! SMSC DP83848 Ethernet PHY
 
-use crate::ethernet::{StationManagement, PHY};
+use crate::periph::ethernet::{StationManagement, PHY};
 
 mod phy_consts {
     pub const REG_BMCR: u8 = 0x00;
