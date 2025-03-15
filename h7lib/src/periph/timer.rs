@@ -332,8 +332,6 @@ macro_rules! channel_tuple {
 
 macro_rules! deadtime_enabled {
     (true, $regs:expr, $option:expr, $baseFreq:expr) => {
-        $regs.bdtr.write(|w| w.moe().set_bit());
-
         if let Some(deadtime) = $option.deadtime {
             // tDTS is based on tCK_INT which is before the prescaler
             // It uses its own separate prescaler CR1.CKD
@@ -363,7 +361,7 @@ macro_rules! deadtime_enabled {
 
             // Choose BDTR DTG bits to match deadtime_ticks
             // We want the smallest value of DTG that gives a deadtime >= the requested deadtime
-            let (dtg, ckd) = {
+            let (dtg, ckd): (u8, u8) = {
                 let mut result = (0, 0);
                 for dtg in 0..=255 {
                     let actual_deadtime: u32 = match dtg {
@@ -389,7 +387,10 @@ macro_rules! deadtime_enabled {
             }
                 
             // Safety: the DTG field of BDTR allows any 8-bit deadtime value and the dtg variable is u8
-            unsafe { $regs.bdtr.write(|w| w.dtg().bits(dtg).aoe().clear_bit().moe().set_bit()); }
+            unsafe { $regs.bdtr.write(|w| w.dtg().bits(dtg).aoe().clear_bit().moe().set_bit()) };
+        }
+        else {
+            unsafe { $regs.bdtr.write(|w| w.moe().set_bit()) };
         }
     };
     (false, $regs:expr, $option:expr, $baseFreq:expr) => {};
@@ -415,9 +416,9 @@ make_timer!(5, 4, u32, apb1, false, true);
 make_timer!(6, 0, u16, apb1, false, false);
 make_timer!(7, 0, u16, apb1, false, false);
 make_timer!(8, 4, u16, apb2, true, true);
-make_timer!(12, 4, u16, apb1, false, false);
-make_timer!(13, 4, u16, apb1, false, false);
-make_timer!(14, 4, u16, apb1, false, false);
-make_timer!(15, 4, u16, apb2, true, false);
-make_timer!(16, 4, u16, apb2, true, false);
-make_timer!(17, 4, u16, apb2, true, false);
+make_timer!(12, 2, u16, apb1, false, false);
+make_timer!(13, 1, u16, apb1, false, false);
+make_timer!(14, 1, u16, apb1, false, false);
+make_timer!(15, 2, u16, apb2, true, false);
+make_timer!(16, 1, u16, apb2, true, false);
+make_timer!(17, 1, u16, apb2, true, false);

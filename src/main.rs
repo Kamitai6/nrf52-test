@@ -160,7 +160,6 @@ fn main() -> ! {
     let mut pwm2 = pwm::Pwm::<1, 2>::new_with_comp(ch2, pe11, pe10);
     let mut pwm3 = pwm::Pwm::<1, 3>::new_with_comp(ch3, pe13, pe12);
     
-
     pwm1.set_duty(pwm1.get_max_duty() / 2);
     pwm2.set_duty(pwm2.get_max_duty() / 2);
     pwm3.set_duty(pwm3.get_max_duty() / 2);
@@ -168,6 +167,12 @@ fn main() -> ! {
     pwm1.enable();
     pwm2.enable();
     pwm3.enable();
+
+    let tim1regs = unsafe {&*pac::TIM1::ptr()};
+    rprintln!("bdtr {:#010x}", tim1regs.bdtr.read().bits());
+    rprintln!("ccer {:#010x}", tim1regs.ccer.read().bits());
+    rprintln!("ccmr1_output {:#010x}", tim1regs.ccmr1_output().read().bits());
+    rprintln!("ccmr2_output {:#010x}", tim1regs.ccmr2_output().read().bits());
 
     // let mut tim2 = timer::Timer::<2>::init(timer::CountMode::Interrupt, &clock);
 

@@ -253,7 +253,7 @@ macro_rules! make_pwm {
             pub fn new_with_comp<G, CG>(channel: timer::Channel<$T, $N>, pin: G, pin2: CG) -> Self
             {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
-                let enabled = (tim.ccer.read().bits() & 1 << ($N * 4)) != 0;
+                let enabled = (tim.ccer.read().bits() & 1 << (($N - 1) * 4)) != 0;
 
                 assert!(!enabled);
 
@@ -311,21 +311,30 @@ macro_rules! make_pwm {
 
             fn ccer_enable(&mut self) {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
-
-                tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() | 1 << ($N * 4)) });
+                if self.with_complexity {
+                    tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() | 1 << (($N - 1) * 4) | 1 << (($N - 1) * 4 + 2)) });
+                }
+                else {
+                    tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() | 1 << (($N - 1) * 4)) });
+                }
             }
             fn ccer_disable(&mut self) {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
 
-                tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() & !(1 << ($N * 4))) });
+                if self.with_complexity {
+                    tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() & !(1 << (($N - 1) * 4)) & !(1 << (($N - 1) * 4 + 2))) });
+                }
+                else {
+                    tim.ccer.modify(|r, w| unsafe { w.bits(r.bits() & !(1 << (($N - 1) * 4))) });
+                }
             }
 
             fn set_polarity(&mut self, pol: Polarity) {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
 
                 tim.ccer.modify(|r, w| unsafe { w.bits(match pol {
-                    Polarity::ActiveLow => r.bits() | 1 << ($N * 4 + 1),
-                    Polarity::ActiveHigh => r.bits() & !(1 << ($N * 4 + 1)),
+                    Polarity::ActiveLow => r.bits() | 1 << (($N - 1) * 4 + 1),
+                    Polarity::ActiveHigh => r.bits() & !(1 << (($N - 1) * 4 + 1)),
                 })});
             }
 
@@ -333,8 +342,8 @@ macro_rules! make_pwm {
                 let tim = unsafe { &*pac::[<TIM $T>]::ptr() };
 
                 tim.ccer.modify(|r, w| unsafe { w.bits(match pol {
-                    Polarity::ActiveLow => r.bits() | 1 << ($N * 4 + 3),
-                    Polarity::ActiveHigh => r.bits() & !(1 << ($N * 4 + 3)),
+                    Polarity::ActiveLow => r.bits() | 1 << (($N - 1) * 4 + 3),
+                    Polarity::ActiveHigh => r.bits() & !(1 << (($N - 1) * 4 + 3)),
                 })});
             }
         }}
