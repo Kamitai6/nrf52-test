@@ -1,6 +1,0 @@
-[submodule "stm32h7xx-hal"]
-	path = stm32h7xx-hal
-	url = git@github.com:Kamitai6/stm32h7xx-hal.git
-[submodule "stm32-hal"]
-	path = stm32-hal
-	url = git@github.com:Kamitai6/stm32-hal.git
