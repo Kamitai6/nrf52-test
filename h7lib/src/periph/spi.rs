@@ -286,7 +286,7 @@ impl<const N: u8> Spi<N> {
                     ((SCK_PORT == 'A' && SCK_PIN == 9) || (SCK_PORT == 'A' && SCK_PIN == 12) || (SCK_PORT == 'B' && SCK_PIN == 10) ||
                         (SCK_PORT == 'B' && SCK_PIN == 13) || (SCK_PORT == 'D' && SCK_PIN == 3) || (SCK_PORT == 'I' && SCK_PIN == 1)) &&
                     ((MISO_PORT == 'B' && MISO_PIN == 14) || (MISO_PORT == 'C' && MISO_PIN == 2) || (MISO_PORT == 'I' && MISO_PIN == 2)) &&
-                    ((MOSI_PORT == 'C' && MOSI_PIN == 1) || (MOSI_PORT == 'C' && MOSI_PIN == 3) || (MOSI_PORT == 'I' && MOSI_PIN == 3))
+                    ((MOSI_PORT == 'B' && MOSI_PIN == 15) || (MOSI_PORT == 'C' && MOSI_PIN == 1) || (MOSI_PORT == 'C' && MOSI_PIN == 3) || (MOSI_PORT == 'I' && MOSI_PIN == 3))
                 },
                 3 => {
                     ((SCK_PORT == 'B' && SCK_PIN == 3) || (SCK_PORT == 'C' && SCK_PIN == 10)) &&
@@ -789,3 +789,10 @@ impl<const N: u8> Spi<N> {
         self.stop_dma(channel, channel2, dma_periph);
     }
 }
+
+unsafe impl Send for Spi<1> {}
+unsafe impl Send for Spi<2> {}
+unsafe impl Send for Spi<3> {}
+unsafe impl Send for Spi<4> {}
+unsafe impl Send for Spi<5> {}
+unsafe impl Send for Spi<6> {}

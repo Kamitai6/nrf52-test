@@ -503,8 +503,22 @@ impl<const N: u8> Dma<N> {
         }
     }
 
+    pub fn transfer_is_complete(&mut self, channel: DmaChannel) -> bool {
+        let regs = unsafe { &(*self.regs_ptr) };
+        match channel {
+            DmaChannel::C0 => regs.lisr.read().tcif0().bit_is_set(),
+            DmaChannel::C1 => regs.lisr.read().tcif1().bit_is_set(),
+            DmaChannel::C2 => regs.lisr.read().tcif2().bit_is_set(),
+            DmaChannel::C3 => regs.lisr.read().tcif3().bit_is_set(),
+            DmaChannel::C4 => regs.hisr.read().tcif4().bit_is_set(),
+            DmaChannel::C5 => regs.hisr.read().tcif5().bit_is_set(),
+            DmaChannel::C6 => regs.hisr.read().tcif6().bit_is_set(),
+            DmaChannel::C7 => regs.hisr.read().tcif7().bit_is_set(),
+        }
+    }
+
     /// Configure a specific DMA channel to work with a specific peripheral.
-    pub fn mux1(channel: DmaChannel, input: DmaInput) {
+    pub fn mux1(&self, channel: DmaChannel, input: DmaInput) {
         // Note: This is similar in API and purpose to `channel_select` above,
         // for different families. We're keeping it as a separate function instead
         // of feature-gating within the same function so the name can be recognizable
@@ -546,8 +560,11 @@ impl<const N: u8> Dma<N> {
     }
 
     /// Configure a specific DMA channel to work with a specific peripheral, on DMAMUX2.
-    pub fn mux2(channel: DmaChannel, input: DmaInput2) {
+    pub fn mux2(&self, channel: DmaChannel, input: DmaInput2) {
         let mux = unsafe { &(*pac::DMAMUX2::ptr()) };
         mux.ccr[channel as usize].modify(|_, w| unsafe { w.dmareq_id().bits(input as u8) });
     }
 }
+
+unsafe impl Send for Dma<1> {}
+unsafe impl Send for Dma<2> {}

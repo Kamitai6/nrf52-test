@@ -3,9 +3,10 @@
 
 use core::{
     cell::RefCell,
+    cell::UnsafeCell,
     sync::atomic::{AtomicU32, Ordering},
 };
-use cortex_m::{asm, interrupt::{Mutex}};
+use cortex_m::{asm, interrupt::free, interrupt::{Mutex}};
 
 use panic_rtt_target as _;
 use rtt_target::{rprintln, rtt_init_print};
@@ -13,7 +14,7 @@ use cortex_m_rt::entry;
 use pac::interrupt;
 
 use h7lib::*;
-use periph::{pwr, rcc, gpio, adc, spi, timer};
+use periph::{pwr, rcc, gpio, adc, spi, timer, dma};
 use plugin::pwm;
 
 // static OVERFLOWS: AtomicU32 = AtomicU32::new(0);
@@ -46,6 +47,19 @@ use plugin::pwm;
     
 //     nss.set_high();
 // }
+
+#[link_section = ".sram3"]
+static mut SPI_READ_BUF: [u8; 8] = [0; 8];
+
+#[link_section = ".sram3"]
+static mut SPI_WRITE_BUF: [u8; 8] = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+
+static DMA: Mutex<RefCell<Option<dma::Dma<1>>>> =
+    Mutex::new(RefCell::new(None));
+static SPI: Mutex<RefCell<Option<spi::Spi<2>>>> =
+    Mutex::new(RefCell::new(None));
+static NSS: Mutex<RefCell<Option<gpio::PA<11>>>> =
+    Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -86,19 +100,72 @@ fn main() -> ! {
 
     // let mut spi3 = spi::Spi::<3>::init(sck, miso, mosi, spi3_config);
 
-    // let sck = gpio::PA::<12>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
-    // let miso = gpio::PB::<14>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
-    // let mosi = gpio::PB::<15>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
-    // let mut nss = gpio::PA::<11>::init(gpio::PinMode::Output(gpio::OutputType::PushPull), &clock);
-    // nss.set_high();
+    let sck = gpio::PA::<12>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
+    let miso = gpio::PB::<14>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
+    let mosi = gpio::PB::<15>::init(gpio::PinMode::AltFn(5, gpio::OutputType::PushPull), &clock);
+    let mut nss = gpio::PA::<11>::init(gpio::PinMode::Output(gpio::OutputType::PushPull), &clock);
+    nss.set_high();
 
-    // let spi2_config = spi::SpiConfig {
-    //     mode: spi::SpiMode::mode1(),
-    //     data_size: spi::DataSize::D8,
-    //     ..Default::default()
-    // };
+    let spi2_config = spi::SpiConfig {
+        mode: spi::SpiMode::mode1(),
+        data_size: spi::DataSize::D8,
+        ..Default::default()
+    };
 
-    // let mut spi2 = spi::Spi::<2>::init(sck, miso, mosi, spi2_config);
+    let mut spi2 = spi::Spi::<2>::init(sck, miso, mosi, spi2_config);
+
+    let mut dma = dma::Dma::<1>::init();
+    dma.mux1(dma::DmaChannel::C1, dma::DmaInput::Spi2Tx);
+    dma.mux1(dma::DmaChannel::C2, dma::DmaInput::Spi2Rx);
+
+    let mut spi_buf: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+    nss.set_low();
+    spi2.transfer(&mut spi_buf).ok();
+    let values = spi_buf;
+    for (i, &value) in values.iter().enumerate() {
+        rprintln!("Received data 1 {}: {:#010x}", i, value);
+    }
+    nss.set_high();
+
+    delay_ms(&clock, 1);
+
+    nss.set_low();
+    unsafe {
+        spi2.transfer_dma(
+            &SPI_WRITE_BUF,
+            &mut SPI_READ_BUF,
+            dma::DmaChannel::C1,
+            dma::DmaChannel::C2,
+            dma::ChannelCfg {
+                priority: dma::Priority::Medium,
+                circular: dma::Circular::Disabled,
+                periph_incr: dma::IncrMode::Disabled,
+                mem_incr: dma::IncrMode::Enabled,
+            },
+            dma::ChannelCfg {
+                priority: dma::Priority::Medium,
+                circular: dma::Circular::Disabled,
+                periph_incr: dma::IncrMode::Disabled,
+                mem_incr: dma::IncrMode::Enabled,
+            },
+            &mut dma,
+        );
+    }
+    rprintln!("transferd!!!");
+
+    cortex_m::interrupt::free(|cs| {
+        DMA.borrow(cs).replace(Some(dma));
+        SPI.borrow(cs).replace(Some(spi2));
+        NSS.borrow(cs).replace(Some(nss));
+    });
+
+    unsafe {
+        pac::NVIC::unmask(pac::interrupt::DMA1_STR1);
+        pac::NVIC::unmask(pac::interrupt::DMA1_STR2);
+
+        // cp.NVIC.set_priority(pac::Interrupt::DMA1_STR1, 0);
+        // cp.NVIC.set_priority(pac::Interrupt::DMA1_STR2, 1);
+    }
 
     // let mut spi_buffer: [u8; 2] = [0; 2];
 
@@ -142,37 +209,37 @@ fn main() -> ! {
     // };
     // let mut adc1 = adc::Adc::<1>::init(pb1, adc1_cfg, &clock);
 
-    let tim1 = timer::Timer::<1>::init(timer::CountMode::Loop, &clock);
-    let ch_option = timer::ChannelOption {
-        frequency: 10.kHz(),
-        polarity: timer::Polarity::ActiveLow,
-        alignment: Some(timer::Alignment::Center),
-        deadtime: Some(1.micros()),
-    };
-    let (ch1, ch2, ch3, ch4) = tim1.split(ch_option);
-    let pe9 = gpio::PE::<9>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let pe11 = gpio::PE::<11>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let pe13 = gpio::PE::<13>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let pe8 = gpio::PE::<8>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let pe10 = gpio::PE::<10>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let pe12 = gpio::PE::<12>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
-    let mut pwm1 = pwm::Pwm::<1, 1>::new_with_comp(ch1, pe9, pe8);
-    let mut pwm2 = pwm::Pwm::<1, 2>::new_with_comp(ch2, pe11, pe10);
-    let mut pwm3 = pwm::Pwm::<1, 3>::new_with_comp(ch3, pe13, pe12);
+    // let tim1 = timer::Timer::<1>::init(timer::CountMode::Loop, &clock);
+    // let ch_option = timer::ChannelOption {
+    //     frequency: 10.kHz(),
+    //     polarity: timer::Polarity::ActiveLow,
+    //     alignment: Some(timer::Alignment::Center),
+    //     deadtime: Some(1.micros()),
+    // };
+    // let (ch1, ch2, ch3, ch4) = tim1.split(ch_option);
+    // let pe9 = gpio::PE::<9>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let pe11 = gpio::PE::<11>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let pe13 = gpio::PE::<13>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let pe8 = gpio::PE::<8>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let pe10 = gpio::PE::<10>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let pe12 = gpio::PE::<12>::init(gpio::PinMode::AltFn(1, gpio::OutputType::PushPull), &clock);
+    // let mut pwm1 = pwm::Pwm::<1, 1>::new_with_comp(ch1, pe9, pe8);
+    // let mut pwm2 = pwm::Pwm::<1, 2>::new_with_comp(ch2, pe11, pe10);
+    // let mut pwm3 = pwm::Pwm::<1, 3>::new_with_comp(ch3, pe13, pe12);
     
-    pwm1.set_duty(pwm1.get_max_duty() / 2);
-    pwm2.set_duty(pwm2.get_max_duty() / 2);
-    pwm3.set_duty(pwm3.get_max_duty() / 2);
+    // pwm1.set_duty(pwm1.get_max_duty() / 2);
+    // pwm2.set_duty(pwm2.get_max_duty() / 2);
+    // pwm3.set_duty(pwm3.get_max_duty() / 2);
 
-    pwm1.enable();
-    pwm2.enable();
-    pwm3.enable();
+    // pwm1.enable();
+    // pwm2.enable();
+    // pwm3.enable();
 
-    let tim1regs = unsafe {&*pac::TIM1::ptr()};
-    rprintln!("bdtr {:#010x}", tim1regs.bdtr.read().bits());
-    rprintln!("ccer {:#010x}", tim1regs.ccer.read().bits());
-    rprintln!("ccmr1_output {:#010x}", tim1regs.ccmr1_output().read().bits());
-    rprintln!("ccmr2_output {:#010x}", tim1regs.ccmr2_output().read().bits());
+    // let tim1regs = unsafe {&*pac::TIM1::ptr()};
+    // rprintln!("bdtr {:#010x}", tim1regs.bdtr.read().bits());
+    // rprintln!("ccer {:#010x}", tim1regs.ccer.read().bits());
+    // rprintln!("ccmr1_output {:#010x}", tim1regs.ccmr1_output().read().bits());
+    // rprintln!("ccmr2_output {:#010x}", tim1regs.ccmr2_output().read().bits());
 
     // let mut tim2 = timer::Timer::<2>::init(timer::CountMode::Interrupt, &clock);
 
@@ -201,6 +268,44 @@ fn main() -> ! {
         // delay_ms(&clock, 1000);
         // led.set_high();
         // // rprintln!("adc1: {}", adc1.read(adc::Channel::C5));
+        loop {
+            delay_us(&clock, 800);
+            free(|cs|{
+                let mut s = NSS.borrow(cs).borrow_mut();
+                let nss = s.as_mut().unwrap();
+                if nss.is_high() {
+                    let mut s = SPI.borrow(cs).borrow_mut();
+                    let spi2 = s.as_mut().unwrap();
+                    let mut rc = DMA.borrow(cs).borrow_mut();
+                    let mut dma = rc.as_mut().unwrap();
+                    
+                    nss.set_low();
+                    
+                    unsafe {
+                        SPI_WRITE_BUF = [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x13, 0xEA];
+                        spi2.transfer_dma(
+                            &SPI_WRITE_BUF,
+                            &mut SPI_READ_BUF,
+                            dma::DmaChannel::C1,
+                            dma::DmaChannel::C2,
+                            dma::ChannelCfg {
+                                priority: dma::Priority::Medium,
+                                circular: dma::Circular::Disabled,
+                                periph_incr: dma::IncrMode::Disabled,
+                                mem_incr: dma::IncrMode::Enabled,
+                            },
+                            dma::ChannelCfg {
+                                priority: dma::Priority::Medium,
+                                circular: dma::Circular::Disabled,
+                                periph_incr: dma::IncrMode::Disabled,
+                                mem_incr: dma::IncrMode::Enabled,
+                            },
+                            &mut dma,
+                        );
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -214,3 +319,46 @@ fn main() -> ! {
 //         timer.clear_irq();
 //     })
 // }
+
+#[interrupt]
+fn DMA1_STR1() {
+    cortex_m::interrupt::free(|cs| {
+        let mut rc = DMA.borrow(cs).borrow_mut();
+        let dma = rc.as_mut().unwrap();
+        let is = dma.transfer_is_complete(dma::DmaChannel::C1);
+        rprintln!("transfer is complete? : {}", is);
+
+        dma.clear_interrupt(dma::DmaChannel::C1, dma::DmaInterrupt::TransferComplete);
+    });
+    rprintln!("transmit complete");
+}
+
+#[interrupt]
+fn DMA1_STR2() {
+    cortex_m::interrupt::free(|cs| {
+        let mut rc = DMA.borrow(cs).borrow_mut();
+        let dma = rc.as_mut().unwrap();
+        let mut rc = SPI.borrow(cs).borrow_mut();
+        let spi = rc.as_mut().unwrap();
+        let mut rc = NSS.borrow(cs).borrow_mut();
+        let nss = rc.as_mut().unwrap();
+        dma.clear_interrupt(dma::DmaChannel::C2, dma::DmaInterrupt::TransferComplete);
+        spi.stop_dma(dma::DmaChannel::C2, Some(dma::DmaChannel::C1), dma);
+        nss.set_high();
+    });
+
+    let values = unsafe { SPI_READ_BUF };
+    for (i, &value) in values.iter().enumerate() {
+        rprintln!("Received data 2 {}: {:#010x}", i, value);
+    }
+    let angle_lsb = ((values[1] & 0x3F) as u16) << 8 | (values[0] as u16);
+    rprintln!("angle {}", angle_lsb);
+    let error_lsb = (values[1] as u16) >> 6;
+    rprintln!("error {}", error_lsb);
+    let crc_lsb = (values[7] as u16);
+    rprintln!("crc {}", crc_lsb);
+    let vgain_lsb = (values[4] as u16);
+    rprintln!("vgain {}", vgain_lsb);
+    let rollcnt_lsb = (values[6] as u16) & 0x3F;
+    rprintln!("rollcnt {}", rollcnt_lsb);
+}

@@ -310,3 +310,5 @@ pub type PE<const PIN: u8> = Gpio<'E', PIN>;
 pub type PF<const PIN: u8> = Gpio<'F', PIN>;
 pub type PG<const PIN: u8> = Gpio<'G', PIN>;
 pub type PH<const PIN: u8> = Gpio<'H', PIN>;
+
+unsafe impl Send for PA<11> {}
