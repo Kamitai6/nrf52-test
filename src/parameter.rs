@@ -1,3 +1,17 @@
+use h7lib::*;
+use periph::{pwr, rcc, gpio, adc, spi, timer, dma, ethernet};
+use plugin::{pwm, ethernet_phy};
+
+use ethernet::smoltcp;
+use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
+use smoltcp::time::Instant;
+use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+
+use ethernet::smoltcp;
+use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
+use smoltcp::time::Instant;
+use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+
 // default configuration values
 // change these values to optimal ones for your application
 

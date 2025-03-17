@@ -29,6 +29,14 @@ where
             virtual_gain: 0,
             crc: 0,
         }
+        // let mut spi_buf: [u8; 8] = [0x00, 0x00, 0xAA, 0xAA, 0x00, 0x00, 0xD0, 0xAB];
+    // nss.set_low();
+    // spi2.transfer(&mut spi_buf).ok();
+    // let values = spi_buf;
+    // for (i, &value) in values.iter().enumerate() {
+    //     rprintln!("Received data 1 {}: {:#010x}", i, value);
+    // }
+    // nss.set_high();
     }
 
     fn angle_lsb(&mut self) -> u16 {
