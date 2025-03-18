@@ -1,3 +1,0 @@
-[submodule "cmsis-sys"]
-	path = cmsis-sys
-	url = git@github.com:ohrlabs/cmsis-sys.git
