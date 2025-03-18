@@ -11,6 +11,7 @@ cortex-m = { version = "^0.7.7", features = ["critical-section-single-core"] }
 stm32h7 = { version = "^0.15.1" }
 fugit = "0.3.5"
 paste = "^1.0.4"
+cmsis-dsp = { version = "0.1.0", path = "../cmsis_dsp.rs" }
 
 smoltcp = { version = "0.12.0", default_features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"], optional = true }
 fdcan = { version = "0.2", optional = true }

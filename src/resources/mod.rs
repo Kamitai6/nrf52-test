@@ -1,2 +1,2 @@
-pub mod shared;
-pub mod local;
+pub mod instance;
+pub mod parameter;

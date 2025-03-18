@@ -1,15 +1,30 @@
-#include "foc_utils.h"
+// 数学定数
+const TWO_DIV_SQRT3: f32 = 1.15470053838;
+const SQRT3: f32 = 1.73205080757;
+const ONE_DIV_SQRT3: f32 = 0.57735026919;
+const SQRT3_DIV_2: f32 = 0.86602540378;
+const SQRT2: f32 = 1.41421356237;
+const DEG120_TO_RAD: f32 = 2.09439510239;
+const PI: f32 = 3.14159265359;
+const PI_DIV_2: f32 = 1.57079632679;
+const PI_DIV_3: f32 = 1.0471975512;
+const TWO_PI: f32 = 6.28318530718;
+const THREE_PI_DIV_2: f32 = 4.71238898038;
+const PI_DIV_6: f32 = 0.52359877559;
+const RPM_TO_RADS: f32 = 0.10471975512;
+
+const HIGH_IMPEDANCE: u8 = 0;
 
 // see https://www.youtube.com/watch?v=InzXA7mWBWE Slide 5
 // each is 60 degrees with values for 3 phases of 1=positive -1=negative 0=high-z
-int trap_120_map[6][3] = {
-  {_HIGH_IMPEDANCE,1,-1},
-  {-1,1,_HIGH_IMPEDANCE},
-  {-1,_HIGH_IMPEDANCE,1},
-  {_HIGH_IMPEDANCE,-1,1},
-  {1,-1,_HIGH_IMPEDANCE},
-  {1,_HIGH_IMPEDANCE,-1} 
-};
+let trap_120_map = [
+  [HIGH_IMPEDANCE,1,-1],
+  [-1,1,HIGH_IMPEDANCE],
+  [-1,HIGH_IMPEDANCE,1],
+  [HIGH_IMPEDANCE,-1,1],
+  [1,-1,HIGH_IMPEDANCE],
+  [1,HIGH_IMPEDANCE,-1] 
+];
 
 // see https://www.youtube.com/watch?v=InzXA7mWBWE Slide 8
 // each is 30 degrees with values for 3 phases of 1=positive -1=negative 0=high-z

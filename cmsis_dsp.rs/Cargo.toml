@@ -1,0 +1,44 @@
+[package]
+name = "cmsis-dsp"
+description = "Bindings to the CMSIS DSP library for ARM Cortex-M processors"
+version = "0.1.0"
+authors = ["Sam Crow <scrow@eng.ucsd.edu>"]
+edition = "2021"
+license = "0BSD"
+repository = "https://github.com/samcrow/cmsis_dsp.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fixed = "1.2.0"
+
+[dependencies.num-complex]
+version = "0.3.0"
+default-features = false
+
+[dependencies.libm]
+version = "0.2.1"
+optional = true
+
+[dependencies.micromath]
+version = "2"
+optional = true
+
+[dependencies.cmsis_dsp_sys_pregenerated]
+path = "cmsis_dsp_sys_pregenerated"
+version = "0.1.0"
+
+[features]
+# Target a Cortex-M7 core
+# If this feature is not enabled, the Cortex-M4 library will be used.
+cortex-m7 = ["cmsis_dsp_sys_pregenerated/cortex-m7"]
+# Target a processor with a double-precision floating point unit (Cortex-M7 only)
+# If this feature is not enabled, the single-precision library will be used and double-precision floating point
+# operations will be emulated in software.
+double-precision-fpu = ["cmsis_dsp_sys_pregenerated/double-precision-fpu"]
+# Target a Cortex-M33 processor with DSP instructions
+# If this feature is not enabled, the non-DSP library will be used.
+dsp-instructions = ["cmsis_dsp_sys_pregenerated/dsp-instructions"]
+
+[workspace]
+exclude = ["cmsis_dsp_example"]

@@ -356,7 +356,9 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn init<const ADC_N: u8, const PORT: char, const PIN: u8>(channel_num: ChannelNum, adc_pin: gpio::Gpio<PORT, PIN>, cfg: ChannelCfg) {
+    pub fn init<const ADC_N: u8, const PORT: char, const PIN: u8>(
+        channel_num: ChannelNum, adc_pin: gpio::Gpio<PORT, PIN>, cfg: ChannelCfg
+    ) -> Self {
         assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
 
         assert!(
@@ -393,6 +395,8 @@ impl Channel {
         Self::set_sample_time::<ADC_N>(&myself, cfg.sample_time);
         Self::set_sequence();
         set_input_type();
+
+        myself
     }
 
     pub fn set_sample_time<const ADC_N: u8>(&self, sample_time: SampleTime) {
