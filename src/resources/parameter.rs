@@ -31,7 +31,7 @@ const DEF_VEL_FILTER_Tf: f32 = 0.005; // default velocity filter time constant
 // current sense default parameters
 const DEF_LPF_PER_PHASE_CURRENT_SENSE_Tf: f32 = 0.0; // default current sense per phase low pass filter time constant
 
-const MAC_ADDRESS: [u8; 6] = [0x02, 0x00, 0x11, 0x22, 0x33, 0x44];
+pub const MAC_ADDRESS: [u8; 6] = [0x02, 0x00, 0x11, 0x22, 0x33, 0x44];
 
 #[link_section = ".sram3"]
 pub static mut SPI2_READ_BUF: [u8; 8] = [0; 8];

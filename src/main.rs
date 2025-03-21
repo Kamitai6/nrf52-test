@@ -30,6 +30,10 @@ fn main() -> ! {
             q_ck: Some(100.MHz()),
             ..Default::default()
         },
+        pll2: rcc::PllConfig {
+            p_ck: Some(4.MHz()),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let clock = rcc::Rcc::init(pwr, rcc_config);

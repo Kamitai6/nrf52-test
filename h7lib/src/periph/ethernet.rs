@@ -386,14 +386,12 @@ impl<const TD: usize, const RD: usize> Default for DesRing<TD, RD> {
 ///
 pub struct EthernetDMA<const TD: usize, const RD: usize> {
     ring: &'static mut DesRing<TD, RD>,
-    eth_dma: pac::ETHERNET_DMA,
 }
 
 ///
 /// Ethernet MAC
 ///
 pub struct EthernetMAC {
-    eth_mac: pac::ETHERNET_MAC,
     eth_phy_addr: u8,
     clock_range: u8,
 }
@@ -429,9 +427,6 @@ pub fn new<
     const TXD0_PORT: char, const TXD0_PIN: u8, 
     const TXD1_PORT: char, const TXD1_PIN: u8,
 >(
-    eth_mac: pac::ETHERNET_MAC,
-    eth_mtl: pac::ETHERNET_MTL,
-    eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
     clocks: &rcc::Rcc,
@@ -456,7 +451,7 @@ pub fn new<
     txd1_pins.set_speed(gpio::Speed::VeryHigh);
 
     unsafe {
-        new_unchecked(eth_mac, eth_mtl, eth_dma, ring, mac_addr, clocks)
+        new_unchecked(ring, mac_addr, clocks)
     }
 }
 
@@ -483,9 +478,6 @@ pub fn new<
 ///
 /// `EthernetDMA` shall not be moved as it is initialised here
 pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
-    eth_mac: pac::ETHERNET_MAC,
-    eth_mtl: pac::ETHERNET_MTL,
-    eth_dma: pac::ETHERNET_DMA,
     ring: &'static mut DesRing<TD, RD>,
     mac_addr: EthernetAddress,
     clocks: &rcc::Rcc,
@@ -515,6 +507,10 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
     //rcc.ahb1rstr.modify(|_, w| w.eth1macrst().clear_bit());
 
     cortex_m::interrupt::free(|_cs| {
+        let eth_mac = &(*pac::ETHERNET_MAC::ptr());
+        let eth_mtl = &(*pac::ETHERNET_MTL::ptr());
+        let eth_dma = &(*pac::ETHERNET_DMA::ptr());
+
         // reset ETH_DMA - write 1 and wait for 0
         eth_dma.dmamr.modify(|_, w| w.swr().set_bit());
         while eth_dma.dmamr.read().swr().bit_is_set() {}
@@ -774,12 +770,11 @@ pub unsafe fn new_unchecked<const TD: usize, const RD: usize>(
     };
 
     let mac = EthernetMAC {
-        eth_mac,
         eth_phy_addr: 0,
         clock_range: csr_clock_range,
     };
 
-    let dma = EthernetDMA { ring, eth_dma };
+    let dma = EthernetDMA { ring };
 
     (dma, mac)
 }
@@ -788,7 +783,6 @@ impl EthernetMAC {
     /// Sets the SMI address to use for the PHY
     pub fn set_phy_addr(self, eth_phy_addr: u8) -> Self {
         Self {
-            eth_mac: self.eth_mac,
             eth_phy_addr,
             clock_range: self.clock_range,
         }
@@ -799,8 +793,9 @@ impl EthernetMAC {
 impl StationManagement for EthernetMAC {
     /// Read a register over SMI.
     fn smi_read(&mut self, reg: u8) -> u16 {
-        while self.eth_mac.macmdioar.read().mb().bit_is_set() {}
-        self.eth_mac.macmdioar.modify(|_, w| unsafe {
+        let eth_mac = unsafe {&(*pac::ETHERNET_MAC::ptr())};
+        while eth_mac.macmdioar.read().mb().bit_is_set() {}
+        eth_mac.macmdioar.modify(|_, w| unsafe {
             w.pa()
                 .bits(self.eth_phy_addr)
                 .rda()
@@ -812,17 +807,18 @@ impl StationManagement for EthernetMAC {
                 .mb()
                 .set_bit()
         });
-        while self.eth_mac.macmdioar.read().mb().bit_is_set() {}
-        self.eth_mac.macmdiodr.read().md().bits()
+        while eth_mac.macmdioar.read().mb().bit_is_set() {}
+        eth_mac.macmdiodr.read().md().bits()
     }
 
     /// Write a register over SMI.
     fn smi_write(&mut self, reg: u8, val: u16) {
-        while self.eth_mac.macmdioar.read().mb().bit_is_set() {}
-        self.eth_mac
+        let eth_mac = unsafe {&(*pac::ETHERNET_MAC::ptr()) };
+        while eth_mac.macmdioar.read().mb().bit_is_set() {}
+        eth_mac
             .macmdiodr
             .write(|w| unsafe { w.md().bits(val) });
-        self.eth_mac.macmdioar.modify(|_, w| unsafe {
+        eth_mac.macmdioar.modify(|_, w| unsafe {
             w.pa()
                 .bits(self.eth_phy_addr)
                 .rda()
@@ -834,7 +830,7 @@ impl StationManagement for EthernetMAC {
                 .mb()
                 .set_bit()
         });
-        while self.eth_mac.macmdioar.read().mb().bit_is_set() {}
+        while eth_mac.macmdioar.read().mb().bit_is_set() {}
     }
 }
 
@@ -913,7 +909,8 @@ impl<const TD: usize, const RD: usize> EthernetDMA<TD, RD> {
     /// Return the number of packets dropped since this method was
     /// last called
     pub fn number_packets_dropped(&self) -> u32 {
-        self.eth_dma.dmacmfcr.read().mfc().bits() as u32
+        let eth_dma = unsafe {&(*pac::ETHERNET_DMA::ptr())};
+        eth_dma.dmacmfcr.read().mfc().bits() as u32
     }
 }
 

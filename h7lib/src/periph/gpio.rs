@@ -72,8 +72,6 @@ pub enum Edge {
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
 pub struct Gpio<const PORT: char, const PIN: u8> {
     pub mode: PinMode,
-
-    regs_ptr: *const pac::gpioa::RegisterBlock,
 }
 
 impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
@@ -85,19 +83,8 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
     /// other than mode and alternate function (if applicable) at their hardware defaults.
     pub fn init(mode: PinMode, _clock: &rcc::Rcc) -> Self {
         let _ = Self::CHECK;
-        let regs_ptr = match PORT {
-            'A' => crate::pac::GPIOA::ptr(),
-            'B' => crate::pac::GPIOB::ptr(),
-            'C' => crate::pac::GPIOC::ptr(),
-            'D' => crate::pac::GPIOD::ptr(),
-            'E' => crate::pac::GPIOE::ptr(),
-            'F' => crate::pac::GPIOF::ptr(),
-            'G' => crate::pac::GPIOG::ptr(),
-            'H' => crate::pac::GPIOH::ptr(),
-            _ => unreachable!(),
-        };
-
-        let regs = unsafe { &(*regs_ptr) };
+        
+        let regs = unsafe { &(*Self::get_regs()) };
         let rcc = unsafe { &(*pac::RCC::ptr()) };
 
         match PORT {
@@ -153,14 +140,13 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
 
         Self {
             mode,
-            regs_ptr,
         }
     }
 
     #[inline(always)]
     /// Set output speed to Low, Medium, or High. Sets the `OSPEEDR` register.
     pub fn set_speed(&mut self, speed: Speed) {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         let offset = 2 * PIN;
 
         unsafe {
@@ -175,7 +161,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
     #[inline(always)]
     /// Set internal pull resistor: Pull up, pull down, or floating. Sets the `PUPDR` register.
     pub fn set_pull(&mut self, pull: Pull) {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         let offset = 2 * PIN;
         unsafe {
             regs.pupdr.modify(|r, w| {
@@ -199,7 +185,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
     /// Set a pin state (ie set high or low output voltage level). See also `set_high()` and
     /// `set_low()`. Sets the `BSRR` register. Atomic.
     pub fn set_state(&mut self, state: PinState) {
-        let regs: &pac::gpioa::RegisterBlock = unsafe { &(*self.regs_ptr) };
+        let regs: &pac::gpioa::RegisterBlock = unsafe { &(*Self::get_regs()) };
         let offset = match state {
             PinState::Low => 16,
             PinState::High => 0,
@@ -211,7 +197,7 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
     #[inline(always)]
     /// Check if the pin's input voltage is high. Reads from the `IDR` register.
     pub fn is_high(&self) -> bool {
-        let regs: &pac::gpioa::RegisterBlock = unsafe { &(*self.regs_ptr) };
+        let regs: &pac::gpioa::RegisterBlock = unsafe { &(*Self::get_regs()) };
         regs.idr.read().bits() & (1 << PIN) != 0
     }
 
@@ -300,6 +286,20 @@ impl<const PORT: char, const PIN: u8> Gpio<PORT, PIN> {
             _ => unreachable!(),
         }
     }
+
+    const fn get_regs() -> *const pac::gpioa::RegisterBlock {
+        match PORT {
+            'A' => crate::pac::GPIOA::ptr(),
+            'B' => crate::pac::GPIOB::ptr(),
+            'C' => crate::pac::GPIOC::ptr(),
+            'D' => crate::pac::GPIOD::ptr(),
+            'E' => crate::pac::GPIOE::ptr(),
+            'F' => crate::pac::GPIOF::ptr(),
+            'G' => crate::pac::GPIOG::ptr(),
+            'H' => crate::pac::GPIOH::ptr(),
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub type PA<const PIN: u8> = Gpio<'A', PIN>;
@@ -310,5 +310,3 @@ pub type PE<const PIN: u8> = Gpio<'E', PIN>;
 pub type PF<const PIN: u8> = Gpio<'F', PIN>;
 pub type PG<const PIN: u8> = Gpio<'G', PIN>;
 pub type PH<const PIN: u8> = Gpio<'H', PIN>;
-
-unsafe impl Send for PA<11> {}

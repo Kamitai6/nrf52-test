@@ -71,7 +71,7 @@ macro_rules! make_timer {
                 rcc_en_reset!($apb, [<tim $N>], rcc);
 
                 let clock = match $N {
-                    1 | 8 | 15..17 => core_clocks.timy_ker_ck.raw(),
+                    1 | 8 | 15..=17 => core_clocks.timy_ker_ck.raw(),
                     _ => core_clocks.timx_ker_ck.raw(),
                 };
 
@@ -134,10 +134,7 @@ macro_rules! make_timer {
             pub fn start(&mut self, value: Hertz) {
                 self.pause();
 
-                match self.count_mode {
-                    CountMode::Loop => {},
-                    CountMode::Interrupt => self.reset_counter(),
-                }
+                self.reset_counter();
 
                 // UEV event occours on next overflow
                 self.urs_counter_only();

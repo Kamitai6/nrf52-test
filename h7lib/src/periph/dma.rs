@@ -234,9 +234,7 @@ impl Default for ChannelCfg {
 }
 
 /// Represents a Direct Memory Access (DMA) peripheral.
-pub struct Dma<const N: u8> {
-    regs_ptr: *const pac::dma1::RegisterBlock,
-}
+pub struct Dma<const N: u8>;
 
 impl<const N: u8> Dma<N> {
     const CHECK: () = {
@@ -247,12 +245,6 @@ impl<const N: u8> Dma<N> {
     pub fn init() -> Self {
         let _ = Self::CHECK;
         
-        let regs_ptr = match N {
-            1 => pac::DMA1::ptr(),
-            2 => pac::DMA2::ptr(),
-            _ => unreachable!(),
-        };
-
         let rcc = unsafe { &(*pac::RCC::ptr()) };
         match N {
             1 => rcc_en_reset!(ahb1, dma1, rcc),
@@ -260,7 +252,7 @@ impl<const N: u8> Dma<N> {
             _ => unreachable!(),
         };
 
-        Self { regs_ptr }
+        Self {}
     }
 
     /// Configure a DMA channel. See L4 RM 0394, section 11.4.4. Sets the Transfer Complete
@@ -276,7 +268,7 @@ impl<const N: u8> Dma<N> {
         mem_size: DataSize,
         cfg: ChannelCfg,
     ) {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         // todo: The H7 sections are different, but we consolidated the comments. Figure out
         // todo what's different and fix it by following the steps
 
@@ -377,7 +369,7 @@ impl<const N: u8> Dma<N> {
 
     /// Stop a DMA transfer, if in progress.
     pub fn stop(&mut self, channel: DmaChannel) {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         // L4 RM:
         // Once the software activates a channel, it waits for the completion of the programmed
         // transfer. The DMA controller is not able to resume an aborted active channel with a possible
@@ -406,7 +398,7 @@ impl<const N: u8> Dma<N> {
     /// Enable a specific type of interrupt.
     pub fn enable_interrupt(self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         // Can only be set when the channel is disabled.
         let cr = &regs.st[channel as usize].cr;
 
@@ -423,7 +415,7 @@ impl<const N: u8> Dma<N> {
 
     pub fn disable_interrupt(self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         // Can only be set when the channel is disabled.
         let cr = &regs.st[channel as usize].cr;
 
@@ -442,7 +434,7 @@ impl<const N: u8> Dma<N> {
 
     pub fn clear_interrupt(&mut self, channel: DmaChannel, interrupt: DmaInterrupt)
     {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         match channel {
             DmaChannel::C0 => match interrupt {
                 DmaInterrupt::TransferError => regs.lifcr.write(|w| w.cteif0().set_bit()),
@@ -504,7 +496,7 @@ impl<const N: u8> Dma<N> {
     }
 
     pub fn transfer_is_complete(&mut self, channel: DmaChannel) -> bool {
-        let regs = unsafe { &(*self.regs_ptr) };
+        let regs = unsafe { &(*Self::get_regs()) };
         match channel {
             DmaChannel::C0 => regs.lisr.read().tcif0().bit_is_set(),
             DmaChannel::C1 => regs.lisr.read().tcif1().bit_is_set(),
@@ -564,7 +556,12 @@ impl<const N: u8> Dma<N> {
         let mux = unsafe { &(*pac::DMAMUX2::ptr()) };
         mux.ccr[channel as usize].modify(|_, w| unsafe { w.dmareq_id().bits(input as u8) });
     }
-}
 
-unsafe impl Send for Dma<1> {}
-unsafe impl Send for Dma<2> {}
+    const fn get_regs() -> *const pac::dma1::RegisterBlock {
+        match N {
+            1 => pac::DMA1::ptr(),
+            2 => pac::DMA2::ptr(),
+            _ => unreachable!(),
+        }
+    }
+}

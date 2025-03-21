@@ -47,42 +47,24 @@ impl BldcCurrent {
         )        
     }
 
-    fn calibrate_offset() {
-        const int calibration_rounds = 2000;
+    // fn calibrate_offset() {
+    //     const int calibration_rounds = 2000;
 
-        // find adc offset = zero current voltage
-        offset_ia = 0;
-        offset_ib = 0;
-        offset_ic = 0;
-        // read the adc voltage 1000 times ( arbitrary number )
-        for (int i = 0; i < calibration_rounds; i++) {
-            _startADC3PinConversionLowSide();
-            if(_isset(pinA)) offset_ia += (_readADCVoltageLowSide(pinA, params));
-            if(_isset(pinB)) offset_ib += (_readADCVoltageLowSide(pinB, params));
-            if(_isset(pinC)) offset_ic += (_readADCVoltageLowSide(pinC, params));
-            _delay(1);
-        }
-        // calculate the mean offsets
-        if(_isset(pinA)) offset_ia = offset_ia / calibration_rounds;
-        if(_isset(pinB)) offset_ib = offset_ib / calibration_rounds;
-        if(_isset(pinC)) offset_ic = offset_ic / calibration_rounds;
-    }
-
-    fn lowpass_filter() {
-        unsigned long timestamp = _micros();
-        float dt = (timestamp - timestamp_prev)*1e-6f;
-
-        if (dt < 0.0f ) dt = 1e-3f;
-        else if(dt > 0.3f) {
-            y_prev = x;
-            timestamp_prev = timestamp;
-            return x;
-        }
-
-        float alpha = Tf/(Tf + dt);
-        float y = alpha*y_prev + (1.0f - alpha)*x;
-        y_prev = y;
-        timestamp_prev = timestamp;
-        return y;
-    }
+    //     // find adc offset = zero current voltage
+    //     offset_ia = 0;
+    //     offset_ib = 0;
+    //     offset_ic = 0;
+    //     // read the adc voltage 1000 times ( arbitrary number )
+    //     for (int i = 0; i < calibration_rounds; i++) {
+    //         _startADC3PinConversionLowSide();
+    //         if(_isset(pinA)) offset_ia += (_readADCVoltageLowSide(pinA, params));
+    //         if(_isset(pinB)) offset_ib += (_readADCVoltageLowSide(pinB, params));
+    //         if(_isset(pinC)) offset_ic += (_readADCVoltageLowSide(pinC, params));
+    //         _delay(1);
+    //     }
+    //     // calculate the mean offsets
+    //     if(_isset(pinA)) offset_ia = offset_ia / calibration_rounds;
+    //     if(_isset(pinB)) offset_ib = offset_ib / calibration_rounds;
+    //     if(_isset(pinC)) offset_ic = offset_ic / calibration_rounds;
+    // }
 }

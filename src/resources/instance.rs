@@ -3,9 +3,8 @@ use periph::{pwr, rcc, gpio, adc, spi, timer, dma, ethernet};
 use plugin::{pwm, ethernet_phy};
 
 use ethernet::smoltcp;
-use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
-use smoltcp::time::Instant;
-use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+
+use super::parameter;
 
 pub struct Instance {
     spi2: spi::Spi<2>,
@@ -42,21 +41,21 @@ impl Instance {
         let mut spi3_nss = gpio::PA::<15>::init(gpio::PinMode::Output(gpio::OutputType::PushPull), &clock);
         spi3_nss.set_high();
 
-        let mut adc1 = adc::Adc::<1>::new(
-            adc::Config {
-                ..Default::default()
-            },
-            &clock,
-            [
-                adc::Channel::init(
-                    adc::ChannelNum::C0,
-                    gpio::PB::<1>::init(gpio::PinMode::Analog, &clock), 
-                    adc::ChannelCfg {
-                        ..Default::default()
-                    }
-                ),
-            ]
-        );
+        // let mut adc1 = adc::Adc::<1>::new(
+        //     adc::Config {
+        //         ..Default::default()
+        //     },
+        //     &clock,
+        //     [
+        //         adc::Channel::init(
+        //             adc::ChannelNum::C0,
+        //             gpio::PB::<1>::init(gpio::PinMode::Analog, &clock), 
+        //             adc::ChannelCfg {
+        //                 ..Default::default()
+        //             }
+        //         ),
+        //     ]
+        // );
         
         let dma1 = dma::Dma::<1>::init();
         dma1.mux1(dma::DmaChannel::C1, dma::DmaInput::Spi2Tx);
@@ -117,15 +116,12 @@ impl Instance {
         let rmii_txd0 = gpio::PB::<12>::init(gpio::PinMode::AltFn(11, gpio::OutputType::PushPull), &clock);
         let rmii_txd1 = gpio::PB::<13>::init(gpio::PinMode::AltFn(11, gpio::OutputType::PushPull), &clock);
 
-        let mac_addr = smoltcp::wire::EthernetAddress::from_bytes(&MAC_ADDRESS);
+        let mac_addr = smoltcp::wire::EthernetAddress::from_bytes(&parameter::MAC_ADDRESS);
         let (eth_dma, eth_mac) = unsafe {
             #[allow(static_mut_refs)] // TODO: Fix this
             ethernet_phy::net::DES_RING.write(ethernet::DesRing::new());
 
             ethernet::new(
-                ctx.device.ETHERNET_MAC,
-                ctx.device.ETHERNET_MTL,
-                ctx.device.ETHERNET_DMA,
                 #[allow(static_mut_refs)] // TODO: Fix this
                 ethernet_phy::net::DES_RING.assume_init_mut(),
                 mac_addr,

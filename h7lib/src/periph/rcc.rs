@@ -7,6 +7,7 @@ use crate::pac::rcc::d1cfgr::HPRE_A as HPRE;
 use crate::pac::rcc::d1ccipr::CKPERSEL_A as CKPERSEL;
 
 use super::pwr;
+use super::pwr::VoltageScale;
 
 mod constants {
     pub const FRACN_DIVISOR: f32 = 8192.0; // 2 ** 13
@@ -146,6 +147,7 @@ pub struct Rcc {
     pub timy_ker_ck: Hertz,
     pub sys_ck: Hertz,
     pub c_ck: Hertz,
+    pub vos: VoltageScale,
 }
 
 impl Rcc {
@@ -498,6 +500,7 @@ impl Rcc {
             timy_ker_ck: rcc_timy_ker_ck.Hz(),
             sys_ck,
             c_ck: sys_d1cpre_ck.Hz(),
+            vos: power.vos,
         }
     }
 

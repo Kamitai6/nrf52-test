@@ -6,8 +6,8 @@
 use core::ptr;
 use cortex_m::{asm, delay::Delay};
 
-use super::{dma, gpio, rcc};
-use crate::{pac, rcc_en_reset};
+use super::{dma, gpio, rcc, pwr};
+use crate::{pac, rcc_en_reset, Hertz};
 
 // Address of the ADCinterval voltage reference. This address is found in the User manual. It appears
 // to be the same for most STM32s. The voltage this is measured at my vary by variant; eg 3.0 vice 3.3.
@@ -15,9 +15,11 @@ use crate::{pac, rcc_en_reset};
 // G474 manual implies you can use *any* ADC on ch 18. G491 shows ADC 1 and 3, ch 18 on both.
 // L4x2 implies ADC1 only.
 mod constants {
+    use super::ChannelNum;
+
     pub const VREFINT_ADDR: u32 = 0x1FF1_E860;
     pub const VREFINT_VOLTAGE: f32 = 3.3;
-    pub const VREFINT_CHANNEL: u8 = 19;
+    pub const VREFINT_CHANNEL: ChannelNum = ChannelNum::C19;
     pub const MAX_ADVREGEN_STARTUP_US: u32 = 10;
 }
 
@@ -43,51 +45,6 @@ pub enum Trigger {
     Tim15Trgo = 14,
     Tim3Cc4   = 15,
     Tim7Trgo  = 30,
-}
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub enum SeqPos {
-    SP1 = 1,
-    SP2,
-    SP3,
-    SP4,
-    SP5,
-    SP6,
-    SP7,
-    SP8,
-    SP9,
-    SP10,
-    SP11,
-    SP12,
-    SP13,
-    SP14,
-    SP15,
-    SP16,
-}
-
-impl SeqPos {
-    pub fn from(num: u8) -> Option<SeqPos> {
-        match num {
-            1 => Some(SeqPos::SP1),
-            2 => Some(SeqPos::SP2),
-            3 => Some(SeqPos::SP3),
-            4 => Some(SeqPos::SP4),
-            5 => Some(SeqPos::SP5),
-            6 => Some(SeqPos::SP6),
-            7 => Some(SeqPos::SP7),
-            8 => Some(SeqPos::SP8),
-            9 => Some(SeqPos::SP9),
-            10 => Some(SeqPos::SP10),
-            11 => Some(SeqPos::SP11),
-            12 => Some(SeqPos::SP12),
-            13 => Some(SeqPos::SP13),
-            14 => Some(SeqPos::SP14),
-            15 => Some(SeqPos::SP15),
-            16 => Some(SeqPos::SP16),
-            _ => None, // 1〜16以外の値には対応しない
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -177,53 +134,6 @@ pub enum OperationMode {
     Continuous = 1,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-#[repr(u8)]
-/// ADC Clock mode
-/// (L44 RM, Section 16.4.3) The input clock is the same for the three ADCs and can be selected between two different
-/// clock sources (see Figure 40: ADC clock scheme):
-/// 1. The ADC clock can be a specific clock source. It can be derived from the following
-/// clock sources:
-/// – The system clock
-/// – PLLSAI1 (single ADC implementation)
-/// Refer to RCC Section for more information on how to generate ADC dedicated clock.
-/// To select this scheme, bits CKMODE[1:0] of the ADCx_CCR register must be reset.
-/// 2. The ADC clock can be derived from the AHB clock of the ADC bus interface, divided by
-/// a programmable factor (1, 2 or 4). In this mode, a programmable divider factor can be
-/// selected (/1, 2 or 4 according to bits CKMODE[1:0]).
-/// To select this scheme, bits CKMODE[1:0] of the ADCx_CCR register must be different
-/// from “00”.
-pub enum ClockMode {
-    /// Use Kernel Clock adc_ker_ck_input divided by PRESC. Asynchronous to AHB clock
-    Async = 0,
-    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant).
-    /// "For option 2), a prescaling factor of 1 (CKMODE[1:0]=01) can be used only if the AHB
-    /// prescaler is set to 1 (HPRE[3:0] = 0xxx in RCC_CFGR register)."
-    SyncDiv1 = 1,
-    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant) divided by 2
-    SyncDiv2 = 2,
-    /// Use AHB clock rcc_hclk3 (or just hclk depending on variant) divided by 4
-    SyncDiv4 = 3,
-}
-
-/// Sets ADC clock prescaler; ADCx_CCR register, PRESC field.
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub enum Prescaler {
-    D1 = 1,
-    D2,
-    D4,
-    D6,
-    D8,
-    D10,
-    D12,
-    D16,
-    D32,
-    D64,
-    D128,
-    D256,
-}
-
 /// ADC data register alignment
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -297,10 +207,6 @@ pub enum Rank {
     R14,
     R15,
     R16,
-    R17,
-    R18,
-    R19,
-    R20,
 }
 
 // todo impl
@@ -338,6 +244,7 @@ pub enum Rank {
 pub struct ChannelCfg {
     pub sample_time: SampleTime,
     pub conversion_rank: Rank,
+    pub input_type: InputType,
 }
 
 impl Default for ChannelCfg {
@@ -345,18 +252,18 @@ impl Default for ChannelCfg {
         Self {
             sample_time: SampleTime::T181_5,
             conversion_rank: Rank::R1,
+            input_type: InputType::SingleEnded,
         }
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct Channel {
+pub struct Channel<const ADC_N: u8> {
     pub(super) number: ChannelNum,
-    pub(super) rank: Option<Rank>,
 }
 
-impl Channel {
-    pub fn init<const ADC_N: u8, const PORT: char, const PIN: u8>(
+impl<const ADC_N: u8> Channel<ADC_N> {
+    pub fn init<const PORT: char, const PIN: u8>(
         channel_num: ChannelNum, adc_pin: gpio::Gpio<PORT, PIN>, cfg: ChannelCfg
     ) -> Self {
         assert!(matches!(adc_pin.mode, gpio::PinMode::Analog), "Mode is not Analog");
@@ -389,17 +296,16 @@ impl Channel {
 
         let myself = Self {
             number: channel_num,
-            rank: Some(cfg.conversion_rank),
         };
 
-        Self::set_sample_time::<ADC_N>(&myself, cfg.sample_time);
-        Self::set_sequence();
-        set_input_type();
+        Self::set_sample_time(&myself, cfg.sample_time);
+        Self::set_sequence(&myself, cfg.conversion_rank);
+        Self::set_input_type(&myself, cfg.input_type);
 
         myself
     }
 
-    pub fn set_sample_time<const ADC_N: u8>(&self, sample_time: SampleTime) {
+    pub fn set_sample_time(&self, sample_time: SampleTime) {
         let periph = unsafe { &(*get_periph_regs::<ADC_N>())};
         let channel_u8 = self.number as u8;
 
@@ -414,7 +320,7 @@ impl Channel {
         }
     }
 
-    pub fn get_sample_time<const ADC_N: u8>(&self) -> SampleTime {
+    pub fn get_sample_time(&self) -> SampleTime {
         let periph = unsafe { &(*get_periph_regs::<ADC_N>())};
         let channel_u8 = self.number as u8;
 
@@ -439,42 +345,32 @@ impl Channel {
         }
     }
 
-    pub fn set_sequence(&self, channel: u8, position: SeqPos) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
-        match position {
-            SeqPos::SP1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(channel) }),
-            SeqPos::SP2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(channel) }),
-            SeqPos::SP3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(channel) }),
-            SeqPos::SP4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(channel) }),
-            SeqPos::SP5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(channel) }),
-            SeqPos::SP6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(channel) }),
-            SeqPos::SP7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(channel) }),
-            SeqPos::SP8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(channel) }),
-            SeqPos::SP9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(channel) }),
-            SeqPos::SP10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(channel) }),
-            SeqPos::SP11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(channel) }),
-            SeqPos::SP12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(channel) }),
-            SeqPos::SP13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(channel) }),
-            SeqPos::SP14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(channel) }),
-            SeqPos::SP15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(channel) }),
-            SeqPos::SP16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(channel) })
+    pub fn set_sequence(&self, rank: Rank) {
+        let periph = unsafe { &(*get_periph_regs::<ADC_N>())};
+        match rank {
+            Rank::R1 => periph.sqr1.modify(|_, w| unsafe { w.sq1().bits(self.number as u8) }),
+            Rank::R2 => periph.sqr1.modify(|_, w| unsafe { w.sq2().bits(self.number as u8) }),
+            Rank::R3 => periph.sqr1.modify(|_, w| unsafe { w.sq3().bits(self.number as u8) }),
+            Rank::R4 => periph.sqr1.modify(|_, w| unsafe { w.sq4().bits(self.number as u8) }),
+            Rank::R5 => periph.sqr2.modify(|_, w| unsafe { w.sq5().bits(self.number as u8) }),
+            Rank::R6 => periph.sqr2.modify(|_, w| unsafe { w.sq6().bits(self.number as u8) }),
+            Rank::R7 => periph.sqr2.modify(|_, w| unsafe { w.sq7().bits(self.number as u8) }),
+            Rank::R8 => periph.sqr2.modify(|_, w| unsafe { w.sq8().bits(self.number as u8) }),
+            Rank::R9 => periph.sqr2.modify(|_, w| unsafe { w.sq9().bits(self.number as u8) }),
+            Rank::R10 => periph.sqr3.modify(|_, w| unsafe { w.sq10().bits(self.number as u8) }),
+            Rank::R11 => periph.sqr3.modify(|_, w| unsafe { w.sq11().bits(self.number as u8) }),
+            Rank::R12 => periph.sqr3.modify(|_, w| unsafe { w.sq12().bits(self.number as u8) }),
+            Rank::R13 => periph.sqr3.modify(|_, w| unsafe { w.sq13().bits(self.number as u8) }),
+            Rank::R14 => periph.sqr3.modify(|_, w| unsafe { w.sq14().bits(self.number as u8) }),
+            Rank::R15 => periph.sqr4.modify(|_, w| unsafe { w.sq15().bits(self.number as u8) }),
+            Rank::R16 => periph.sqr4.modify(|_, w| unsafe { w.sq16().bits(self.number as u8) })
         }
 
-        periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << (channel))) });
+        periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() | (1 << (self.number as u8))) });
     }
 
-    pub fn set_input_type(&self, channel: u8, input_type: InputType) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
-
-        // L44 RM, 16.4.7:
-        // Channels can be configured to be either single-ended input or differential input by writing
-        // into bits DIFSEL[15:1] in the ADC_DIFSEL register. This configuration must be written while
-        // the ADC is disabled (ADEN=0). Note that DIFSEL[18:16,0] are fixed to single ended
-        // channels and are always read as 0.
-        let was_enabled = self.is_enabled();
-        if was_enabled {
-            self.disable();
-        }
+    pub fn set_input_type(&self, input_type: InputType) {
+        let periph = unsafe { &(*get_periph_regs::<ADC_N>())};
 
         // Note that we don't use the `difsel` PAC accessor here, due to its varying
         // implementations across different PACs.
@@ -482,38 +378,28 @@ impl Channel {
         let val = periph.difsel.read().bits();
 
         let val_new = match input_type {
-            InputType::SingleEnded => val & !(1 << (channel as u8)),
-            InputType::Differential => val | (1 << (channel as u8)),
+            InputType::SingleEnded => val & !(1 << (self.number as u8)),
+            InputType::Differential => val | (1 << (self.number as u8)),
         };
         periph.difsel.write(|w| unsafe { w.bits(val_new)});
-
-        if was_enabled {
-            self.enable();
-        }
     }
 }
 
 /// Initial configuration data for the ADC peripheral.
 #[derive(Clone)]
 pub struct Config {
-    /// ADC clock mode. Defaults to AHB clock rcc_hclk3 (or hclk) divided by 2.
-    pub clock_mode: ClockMode,
-    /// ADC clock prescaler. Defaults to no division.
-    pub prescaler: Prescaler,
+    pub clock: Hertz,
     /// One-shot, or continuous measurements. Defaults to one-shot.
     pub operation_mode: OperationMode,
-    // Most families use u8 values for calibration, but H7 uses u16.
-    /// Optional calibration data for single-ended measurements.
-    pub cal_single_ended: Option<u16>,
-    /// Optional calibration data for differential measurements.
-    pub cal_differential: Option<u16>,
+
+    cal_single_ended: Option<u16>,
+    cal_differential: Option<u16>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            clock_mode: ClockMode::SyncDiv1,
-            prescaler: Prescaler::D1,
+            clock: Hertz::from_raw(0),
             operation_mode: OperationMode::OneShot,
             cal_single_ended: None,
             cal_differential: None,
@@ -521,34 +407,31 @@ impl Default for Config {
     }
 }
 
-pub struct Adc<const N: u8> {
+pub struct Adc<'c, const N: u8> {
     pub cfg: Config,
     vdda_calibrated: f32,
     delay_base_freq: u32,
-    pub channels: [Option<Channel>; 20],
-    enabled_ch_total: u8,
+    pub channels: &'c [Option<Channel<N>>; 20],
 }
 
-impl<const N: u8> Adc<N> {
+impl<'c, const N: u8> Adc<'c, N> {
     const CHECK: () = {
         assert!(1 <= N && N <= 3, "Adc must be 1 - 3.");
     };
-    pub fn new(cfg: Config, clock: &rcc::Rcc, channels: &[Channel]) -> Self {
+    pub fn new(cfg: Config, clocks: &rcc::Rcc, channels: &'c [Option<Channel<N>>; 20]) -> Self {
         let _ = Self::CHECK;
 
-        let chs = ;
+        let some_count = channels.iter().filter(|option| option.is_some()).count() as u8;
 
         let mut myself = Self {
             cfg,
             vdda_calibrated: 0.,
-            delay_base_freq: clock.sys_ck.raw(),
-            channels: chs,
-            enabled_ch_total: 0,
+            delay_base_freq: clocks.sys_ck.raw(),
+            channels,
         };
 
         let rcc = unsafe { &(*pac::RCC::ptr()) };
         let periph = unsafe { &(*get_periph_regs::<N>())};
-        let common = unsafe { &(*get_common_regs::<N>())};
 
         match N {
             1 | 2 => rcc_en_reset!(ahb1, adc12, rcc),
@@ -556,16 +439,12 @@ impl<const N: u8> Adc<N> {
             _ => unreachable!(),
         }
 
-        common.ccr.modify(|_, w| unsafe {
-            w.presc().bits(myself.cfg.prescaler as u8);
-            return w.ckmode().bits(myself.cfg.clock_mode as u8);
-        });
+        Self::set_clock(&myself.cfg.clock, clocks);
 
         Self::set_align(&myself, Align::default());
         Self::advregen_enable(&mut myself);
         Self::calibrate(&mut myself, InputType::SingleEnded);
         Self::calibrate(&mut myself, InputType::Differential);
-        asm::delay(myself.cfg.clock_mode as u32 * 4 * 2); // additional x2 is a pad;
 
         #[cfg(all(not(any(feature = "h743", feature = "h753"))))]
         periph.cr.modify(|_, w| w.boost().bits(1));
@@ -579,27 +458,32 @@ impl<const N: u8> Adc<N> {
         // to take a oneshot reading.
         periph.cfgr.modify(|_, w| w.cont().bit(myself.cfg.operation_mode as u8 != 0));
 
+        Self::set_sequence_len(&mut myself, some_count);
+
         myself
     }
 
     /// Take a single reading; return a raw integer value.
-    pub fn read_raw(&self, channel_num: [u8]) -> [u16] {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+    pub fn read_raw<const C_LEN: usize>(&self, channel_num: &[ChannelNum; C_LEN]) -> [u16; C_LEN] {
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         
-        self.set_sequence_len(len);
-        start_conversion();
-
         // After the regular sequence is complete, after each conversion is complete,
         // the EOC (end of regular conversion) flag is set.
         // After the regular sequence is complete: The EOS (end of regular sequence) flag is set.
-        while periph.isr.read().eos().bit_is_clear() {}  // wait until complete.
         
-        periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() & !(1 << channel_num)) });
-        periph.dr.read().rdata().bits() as u16
+        self.start_conversion();
+        while periph.isr.read().eos().bit_is_clear() {}  // wait until complete.
+
+        let mut adc_values = [0u16; C_LEN];
+        for i in 0..C_LEN {
+            periph.pcsel.modify(|r, w| unsafe { w.pcsel().bits(r.pcsel().bits() & !(1 << channel_num[i] as u8)) });
+            adc_values[i] = periph.dr.read().rdata().bits();
+        }
+        adc_values
     }
 
     /// Take a single reading; return a voltage.
-    pub fn read(&self, channel_num: [u8]) -> [f32] {
+    pub fn read<const C_LEN: usize>(&self, channel_num: &[ChannelNum; C_LEN]) -> [f32; C_LEN] {
         let reading = self.read_raw(channel_num);
         // RM:
         // Converting a supply-relative ADC measurement to an absolute voltage value
@@ -619,11 +503,15 @@ impl<const N: u8> Adc<N> {
         // resolution, it will be 212 − 1 = 4095 or with 8-bit resolution, 28 − 1 = 255
         // todo: FULL_SCALE will be different for 16-bit. And differential?
 
-        self.vdda_calibrated / 4_096. * reading as f32
+        let mut adc_values = [0.; C_LEN];
+        for i in 0..C_LEN {
+            adc_values[i] = self.vdda_calibrated / 4_096. * reading[i] as f32;
+        }
+        adc_values
     }
 
     pub fn enable(&self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         // 1. Clear the ADRDY bit in the ADC_ISR register by writing ‘1’.
         periph.isr.modify(|_, w| w.adrdy().set_bit());
@@ -637,7 +525,7 @@ impl<const N: u8> Adc<N> {
     }
 
     pub fn disable(&self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         // 1. Check that both ADSTART=0 and JADSTART=0 to ensure that no conversion is
         // ongoing. If required, stop any regular and injected conversion ongoing by setting
@@ -653,12 +541,12 @@ impl<const N: u8> Adc<N> {
     }
 
     pub fn is_enabled(&self) -> bool {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.cr.read().aden().bit_is_set()
     }
 
     pub fn advregen_enable(&mut self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         // L443 RM, 16.4.6; G4 RM, section 21.4.6: Deep-power-down mode (DEEPPWD) and ADC voltage
         // regulator (ADVREGEN)
         //
@@ -677,7 +565,7 @@ impl<const N: u8> Adc<N> {
     }
 
     pub fn advregen_disable(&mut self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         // L4 RM, 16.4.6: Writing DEEPPWD=1 automatically disables the ADC voltage
         // regulator and bit ADVREGEN is automatically cleared.
         // When the internal voltage regulator is disabled (ADVREGEN=0), the internal analog
@@ -691,7 +579,7 @@ impl<const N: u8> Adc<N> {
     }
 
     pub fn is_advregen_enabled(&self) -> bool {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.cr.read().advregen().bit_is_set()
     }
 
@@ -705,7 +593,7 @@ impl<const N: u8> Adc<N> {
     /// Stores calibration values, which can be re-inserted later,
     /// eg after entering ADC deep sleep mode, or MCU STANDBY or VBAT.
     pub fn calibrate(&mut self, input_type: InputType) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         // 1. Ensure DEEPPWD=0, ADVREGEN=1 and that ADC voltage regulator startup time has
         // elapsed.
@@ -762,7 +650,7 @@ impl<const N: u8> Adc<N> {
     /// Insert a previously-saved calibration value into the ADC.
     /// Se L4 RM, 16.4.8.
     pub fn inject_calibration(&mut self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         // 1. Ensure ADEN=1 and ADSTART=0 and JADSTART=0 (ADC enabled and no
         // conversion is ongoing).
@@ -789,7 +677,7 @@ impl<const N: u8> Adc<N> {
     /// Blocks until the conversion is complete.
     /// See L4 RM 16.4.15 for details.
     pub fn start_conversion(&self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         periph.cr.modify(|_, w| w.adstart().set_bit());  // Start
     }
@@ -803,7 +691,7 @@ impl<const N: u8> Adc<N> {
     /// The scan sequence is also aborted and reset (meaning that relaunching the ADC would
     /// restart a new sequence).
     pub fn stop_conversions(&self) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
 
         // The software can decide to stop regular conversions ongoing by setting ADSTP=1 and
         // injected conversions ongoing by setting JADSTP=1.
@@ -821,14 +709,14 @@ impl<const N: u8> Adc<N> {
 
     pub fn set_sequence_len(&self, len: u8) {
         assert!(1 <= len && len <= 16, "len must be 1 ~ 16");
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.sqr1.modify(|_, w| unsafe { w.l().bits(len - 1) });
     }
 
     /// Find and store the internal voltage reference, to improve conversion from reading
     /// to voltage accuracy. See L44 RM, section 16.4.34: "Monitoring the internal voltage reference"
     fn setup_vdda(&mut self) {
-        let common = unsafe { &(*Self::get_common_regs())};
+        let common = unsafe { &(*get_common_regs::<N>())};
         // RM: It is possible to monitor the internal voltage reference (VREFINT) to have a reference point for
         // evaluating the ADC VREF+ voltage level.
         // The internal voltage reference is internally connected to the input channel 0 of the ADC1
@@ -886,15 +774,16 @@ impl<const N: u8> Adc<N> {
             let mut delay = Delay::new(cp.SYST, self.delay_base_freq);
             delay.delay_us(100);
 
-            let pre_sampletime = self.channels[0].unwrap().get_sample_time::<N>();
+            let pre_sampletime = self.channels[0].unwrap().get_sample_time();
 
-            self.channels[0].unwrap().set_sample_time::<N>(SampleTime::T181_5);
-            let reading = self.read(constants::VREFINT_CHANNEL);
+            self.channels[0].unwrap().set_sample_time(SampleTime::T181_5);
+            let read_chs = [constants::VREFINT_CHANNEL];
+            let reading = self.read(&read_chs);
             self.stop_conversions();
 
             common.ccr.modify(|_, w| w.vrefen().clear_bit());
 
-            self.channels[0].unwrap().set_sample_time::<N>(pre_sampletime);
+            self.channels[0].unwrap().set_sample_time(pre_sampletime);
 
             // The VDDA power supply voltage applied to the microcontroller may be subject to variation or
             // not precisely known. The embedded internal voltage reference (VREFINT) and its calibration
@@ -909,19 +798,19 @@ impl<const N: u8> Adc<N> {
             // todo: This address may be different on different MCUs, even within the same family.
             // Although, it seems relatively consistent. Check User Manuals.
             let vrefint_cal: u16 = unsafe { ptr::read_volatile(&*(constants::VREFINT_ADDR as *const _)) };
-            constants::VREFINT_VOLTAGE * vrefint_cal as f32 / reading as f32
+            constants::VREFINT_VOLTAGE * vrefint_cal as f32 / reading[0] as f32
         };
     }
 
     pub fn set_align(&self, align: Align) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.cfgr2.modify(|_, w| w.lshift().bits(align as u8));
     }
 
     /// Select and activate a trigger. See G4 RM, section 21.4.18:
     /// Conversion on external trigger and trigger polarit
     pub fn set_trigger(&mut self, trigger: Trigger, edge: TriggerEdge) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.cfgr.modify(|_, w| unsafe {
             w.exten().bits(edge as u8);
             w.extsel().bits(trigger as u8)
@@ -930,7 +819,7 @@ impl<const N: u8> Adc<N> {
 
     /// Enable a specific type of ADC interrupt.
     pub fn enable_interrupt(&mut self, interrupt: AdcInterrupt) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.ier.modify(|_, w| match interrupt {
             AdcInterrupt::Ready => w.adrdyie().set_bit(),
             AdcInterrupt::EndOfConversion => w.eocie().set_bit(),
@@ -949,7 +838,7 @@ impl<const N: u8> Adc<N> {
     /// Clear an interrupt flag of the specified type. Consider running this in the
     /// corresponding ISR.
     pub fn clear_interrupt(&mut self, interrupt: AdcInterrupt) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         periph.isr.write(|w| match interrupt {
             AdcInterrupt::Ready => w.adrdy().set_bit(),
             AdcInterrupt::EndOfConversion => w.eoc().set_bit(),
@@ -988,7 +877,7 @@ impl<const N: u8> Adc<N> {
         dma_channel_cfg: dma::ChannelCfg,
         dma_periph: &mut dma::Dma<1>,
     ) {
-        let periph = unsafe { &(*Self::get_periph_regs())};
+        let periph = unsafe { &(*get_periph_regs::<N>())};
         let (ptr, len) = (buf.as_mut_ptr(), buf.len());
         // The software is allowed to write (dmaen and dmacfg) only when ADSTART=0 and JADSTART=0 (which
         // ensures that no conversion is ongoing)
@@ -999,8 +888,6 @@ impl<const N: u8> Adc<N> {
             // ie set back to 0b00.
             w.dmngt().bits(if dma_channel_cfg.circular == dma::Circular::Enabled { 0b11 } else { 0b01 })
         });
-
-        set_sequence_len();
 
         periph.cr.modify(|_, w| w.adstart().set_bit());  // Start
 
@@ -1052,6 +939,76 @@ impl<const N: u8> Adc<N> {
             dma::DataSize::S16,
             dma_channel_cfg,
         );
+    }
+
+    // For pll2_p_ck
+    fn set_clock(target: &Hertz, clocks: &rcc::Rcc) {
+        let ker_ck = Self::kernel_clk_unwrap(clocks);
+
+        let max_ker_ck = match clocks.vos {
+            pwr::VoltageScale::Scale0 | pwr::VoltageScale::Scale1 => 80_000_000,
+            pwr::VoltageScale::Scale2 | pwr::VoltageScale::Scale3 => 40_000_000
+        };
+        assert!(ker_ck.raw() <= max_ker_ck,
+                "Kernel clock violates maximum frequency defined in Reference Manual. \
+                    Can result in erroneous ADC readings");
+
+        // Target mux output. See RM0433 Rev 7 - Figure 136.
+        #[cfg(feature = "revision_v")]
+        let f_target = target.raw() * 2;
+
+        #[cfg(not(feature = "revision_v"))]
+        let f_target = target.raw();
+
+        use crate::pac::adc3_common::ccr::PRESC_A;
+        let (divider, presc) = match ker_ck.raw().div_ceil(f_target) {
+            1 => (1, PRESC_A::Div1),
+            2 => (2, PRESC_A::Div2),
+            3..=4 => (4, PRESC_A::Div4),
+            5..=6 => (6, PRESC_A::Div6),
+            7..=8 => (8, PRESC_A::Div8),
+            9..=10 => (10, PRESC_A::Div10),
+            11..=12 => (12, PRESC_A::Div12),
+            13..=16 => (16, PRESC_A::Div16),
+            17..=32 => (32, PRESC_A::Div32),
+            33..=64 => (64, PRESC_A::Div64),
+            65..=128 => (128, PRESC_A::Div128),
+            129..=256 => (256, PRESC_A::Div256),
+            _ => panic!("Selecting the ADC clock required a prescaler > 256, \
+                            which is not possible in hardware. Either increase the ADC \
+                            clock frequency or decrease the kernel clock frequency"),
+        };
+        let common = unsafe { &(*get_common_regs::<N>())};
+        common.ccr.modify(|_, w| w.presc().variant(presc));
+
+        // Calculate actual value. See RM0433 Rev 7 - Figure 136.
+        #[cfg(feature = "revision_v")]
+        let f_adc = Hertz::from_raw(ker_ck.raw() / (divider * 2));
+
+        // Calculate actual value Revison Y. See RM0433 Rev 7 - Figure 137.
+        #[cfg(not(feature = "revision_v"))]
+        let f_adc = Hertz::from_raw(ker_ck.raw() / divider);
+
+        // Maximum ADC clock speed. With BOOST = 0 there is a no
+        // minimum frequency given in part datasheets
+        assert!(f_adc.raw() <= 50_000_000);
+    }
+
+    fn kernel_clk_unwrap(clocks: &rcc::Rcc) -> Hertz {
+        let ccipr = unsafe { (*pac::RCC::ptr()).d3ccipr.read() };
+        use crate::pac::rcc::d3ccipr::ADCSEL_A;
+        match ccipr.adcsel().variant() {
+            Some(ADCSEL_A::Pll2P) => {
+                clocks.pll2_p_ck.expect("ADC: PLL2_P must be enabled")
+            }
+            Some(ADCSEL_A::Pll3R) => {
+                clocks.pll3_r_ck.expect("ADC: PLL3_R must be enabled")
+            }
+            Some(ADCSEL_A::Per) => {
+                clocks.per_ck.expect("ADC: PER clock must be enabled")
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
