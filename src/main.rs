@@ -4,8 +4,6 @@
 mod resources;
 use resources::{instance, parameter};
 
-use rtic::app;
-
 use panic_rtt_target as _;
 use rtt_target::{rprintln, rtt_init_print};
 
@@ -47,6 +45,11 @@ fn main() -> ! {
 
 // #[interrupt]
 // fn TIM1() {
+    //処理
+    //カルマンフィルタ計算
+    //PIDかSMCで計算
+    //PWM出力
+    //センサーデータ取得
 //     unsafe {
 //         spi2.transfer_dma(
 //             &SPI_WRITE_BUF,
