@@ -319,4 +319,111 @@ impl Calibrator {
         
         println!("\nPlotting 3rd column of data (electricAngleError) will likely show sinusoidal cogging pattern with a frequency of 4xpole_pairs per rotation\n");
     }
+
+    // fn calibrate_offset() {
+    //     const int calibration_rounds = 2000;
+
+    //     // find adc offset = zero current voltage
+    //     offset_ia = 0;
+    //     offset_ib = 0;
+    //     offset_ic = 0;
+    //     // read the adc voltage 1000 times ( arbitrary number )
+    //     for (int i = 0; i < calibration_rounds; i++) {
+    //         _startADC3PinConversionLowSide();
+    //         if(_isset(pinA)) offset_ia += (_readADCVoltageLowSide(pinA, params));
+    //         if(_isset(pinB)) offset_ib += (_readADCVoltageLowSide(pinB, params));
+    //         if(_isset(pinC)) offset_ic += (_readADCVoltageLowSide(pinC, params));
+    //         _delay(1);
+    //     }
+    //     // calculate the mean offsets
+    //     if(_isset(pinA)) offset_ia = offset_ia / calibration_rounds;
+    //     if(_isset(pinB)) offset_ib = offset_ib / calibration_rounds;
+    //     if(_isset(pinC)) offset_ic = offset_ic / calibration_rounds;
+    // }
+    pub fn calibration(&mut self) -> Result<_, ()> {
+        // let mut exit_flag = 1; // success
+        // println!("MOT: Align sensor.");
+
+        // // check if sensor needs zero search
+        // if self.sensor.as_ref().unwrap().needs_search() {
+        //     exit_flag = self.absolute_zero_search();
+        // }
+        // // stop init if not found index
+        // if exit_flag == 0 {
+        //     return exit_flag;
+        // }
+
+        // // v2.3.3 fix for R_AVR_7_PCREL against symbol" bug for AVR boards
+        // // TODO figure out why this works
+        // let voltage_align = self.voltage_sensor_align;
+
+        // // if unknown natural direction
+        // if self.sensor_direction == Direction::Unknown {
+        //     // find natural direction
+        //     // move one electrical revolution forward
+        //     for i in 0..=500 {
+        //         let angle = 3.0 * PI / 2.0 + 2.0 * PI * i as f32 / 500.0;
+        //         self.set_phase_voltage(voltage_align, 0.0, angle);
+        //         self.sensor.as_mut().unwrap().update();
+        //         std::thread::sleep(std::time::Duration::from_millis(2));
+        //     }
+        //     // take and angle in the middle
+        //     self.sensor.as_mut().unwrap().update();
+        //     let mid_angle = self.sensor.as_ref().unwrap().get_angle();
+        //     // move one electrical revolution backwards
+        //     for i in (0..=500).rev() {
+        //         let angle = 3.0 * PI / 2.0 + 2.0 * PI * i as f32 / 500.0;
+        //         self.set_phase_voltage(voltage_align, 0.0, angle);
+        //         self.sensor.as_mut().unwrap().update();
+        //         std::thread::sleep(std::time::Duration::from_millis(2));
+        //     }
+        //     self.sensor.as_mut().unwrap().update();
+        //     let end_angle = self.sensor.as_ref().unwrap().get_angle();
+        //     std::thread::sleep(std::time::Duration::from_millis(200));
+        //     // determine the direction the sensor moved
+        //     let moved = (mid_angle - end_angle).abs();
+        //     if moved < MIN_ANGLE_DETECT_MOVEMENT {
+        //         // minimum angle to detect movement
+        //         println!("MOT: Failed to notice movement");
+        //         return 0; // failed calibration
+        //     } else if mid_angle < end_angle {
+        //         println!("MOT: sensor_direction==CCW");
+        //         self.sensor_direction = Direction::CCW;
+        //     } else {
+        //         println!("MOT: sensor_direction==CW");
+        //         self.sensor_direction = Direction::CW;
+        //     }
+        //     // check pole pair number
+        //     let pp_check_result = (moved * self.pole_pairs as f32 - 2.0 * PI).abs() <= 0.5;
+        //     if !pp_check_result {
+        //         println!("MOT: PP check: fail - estimated pp: {}", 2.0 * PI / moved);
+        //     } else {
+        //         println!("MOT: PP check: OK!");
+        //     }
+        // } else {
+        //     println!("MOT: Skip dir calib.");
+        // }
+
+        // // zero electric angle not known
+        // if !self.zero_electric_angle.is_some() {
+        //     // align the electrical phases of the motor and sensor
+        //     // set angle -90(270 = 3PI/2) degrees
+        //     self.set_phase_voltage(voltage_align, 0.0, 3.0 * PI / 2.0);
+        //     std::thread::sleep(std::time::Duration::from_millis(700));
+        //     // read the sensor
+        //     self.sensor.as_mut().unwrap().update();
+        //     // get the current zero electric angle
+        //     self.zero_electric_angle = self.electrical_angle();
+        //     if self.monitor_port.is_some() {
+        //         println!("MOT: Zero elec. angle: {}", self.zero_electric_angle);
+        //     }
+        //     // stop everything
+        //     self.set_phase_voltage(0.0, 0.0, 0.0);
+        //     std::thread::sleep(std::time::Duration::from_millis(200));
+        // } else {
+        //     println!("MOT: Skip offset calib.");
+        // }
+        // exit_flag
+        Ok(())
+    }
 }

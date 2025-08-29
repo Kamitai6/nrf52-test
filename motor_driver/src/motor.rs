@@ -1,11 +1,12 @@
-pub struct Motor {
+// PMSM（永久磁石同期モーター）=== BLDC（ブラシレスDCモーター）
+pub struct PMSM {
     pole_pairs: i32,
     phase_resistance: f32,
     kv_rating: Option<f32>,
     phase_inductance: f32,
 }
 
-impl Motor {
+impl PMSM {
     pub fn new(
         pole_pairs: i32,
         phase_resistance: f32,

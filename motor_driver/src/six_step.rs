@@ -1,6 +1,9 @@
+use super::motor;
+
 pub struct SixStepControl {
     speed: f32,
     phase: u8,
+    motor: motor::Motor,
 }
 
 impl SixStepControl {
