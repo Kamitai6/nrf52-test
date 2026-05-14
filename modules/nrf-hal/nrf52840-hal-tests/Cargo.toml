@@ -1,0 +1,44 @@
+[package]
+edition = "2018"
+name = "nrf52840-hal-tests"
+publish = false
+version = "0.0.0"
+
+[[test]]
+name = "gpio-input-floating"
+harness = false
+
+[[test]]
+name = "gpio-input-pulled"
+harness = false
+
+[[test]]
+name = "gpio-output-push-pull"
+harness = false
+
+[[test]]
+name = "gpio-output-open-drain"
+harness = false
+
+[[test]]
+name = "gpio-output-open-drain-io"
+harness = false
+
+[[test]]
+name = "nvmc"
+harness = false
+
+[[test]]
+name = "serial"
+harness = false
+
+[dev-dependencies]
+cortex-m = "0.7.3"
+cortex-m-rt = { version = "0.7.1", features = ["device"] }
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
+defmt-test = "0.5.0"
+embedded-hal = "1.0.0"
+embedded-storage = "0.3.0"
+nrf52840-hal = { path = "../nrf52840-hal" }
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }

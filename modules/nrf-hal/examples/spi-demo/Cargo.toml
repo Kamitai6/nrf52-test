@@ -1,0 +1,19 @@
+[package]
+name = "spi-demo"
+version = "0.1.0"
+authors = ["Fredrik Simonsson <simson@thesimson.net>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+cortex-m-rt = "0.7.0"
+embedded-hal = "1.0.0"
+panic-halt = "1.0.0"
+
+[dependencies.nrf52832-hal]
+path = "../../nrf52832-hal"
+optional = true
+
+[features]
+52832 = ["nrf52832-hal"]
+default = ["52832"]

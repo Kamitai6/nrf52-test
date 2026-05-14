@@ -1,0 +1,38 @@
+[package]
+name = "nrf52832-hal"
+version = "0.20.0"
+description = "HAL for nRF52832 microcontrollers"
+readme = "../README.md"
+
+repository = "https://github.com/nrf-rs/nrf-hal"
+authors = [
+    "James Munns <james@onevariable.com>",
+    "Hanno Braun <hanno@braun-robotics.com>",
+]
+
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["arm", "cortex-m", "nrf52", "hal", "nrf52832"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[dependencies]
+nrf52832-pac = "0.12.2"
+
+[dependencies.nrf-hal-common]
+path = "../nrf-hal-common"
+default-features = false
+features = ["52832"]
+version = "=0.20.0"
+
+[features]
+doc = []
+defmt = ["nrf-hal-common/defmt"]
+embedded-hal-02 = ["nrf-hal-common/embedded-hal-02"]
+rt = ["nrf52832-pac/rt"]
+xxAA-package = []
+xxAB-package = []
+rtic-monotonic = ["nrf-hal-common/rtic-monotonic"]
+
+# Note: We use the xxAB package because it has the least amount of available resources.
+#   However, most users will want to use the xxAA package.
+default = ["rt", "xxAB-package", "embedded-hal-02"]

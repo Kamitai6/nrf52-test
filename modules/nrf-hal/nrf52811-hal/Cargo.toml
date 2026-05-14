@@ -1,0 +1,34 @@
+[package]
+name = "nrf52811-hal"
+version = "0.20.0"
+edition = "2018"
+description = "HAL for nRF52811 microcontrollers"
+readme = "../README.md"
+
+repository = "https://github.com/nrf-rs/nrf-hal"
+authors = [
+    "James Munns <james@onevariable.com>",
+    "Hanno Braun <hanno@braun-robotics.com>",
+    "John Scarrott <johnps@outlook.com>",
+    "Wez Furlong <wez@wezfurlong.org>",
+    "Ferdia McKeogh <ferdia@mckeogh.tech>",
+]
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["arm", "cortex-m", "nrf52", "hal", "nrf52811"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+nrf52811-pac = "0.12.2"
+
+[dependencies.nrf-hal-common]
+path = "../nrf-hal-common"
+default-features = false
+features = ["52811"]
+version = "=0.20.0"
+
+[features]
+embedded-hal-02 = ["nrf-hal-common/embedded-hal-02"]
+defmt = ["nrf-hal-common/defmt"]
+rt = ["nrf52811-pac/rt"]
+rtic-monotonic = ["nrf-hal-common/rtic-monotonic"]
+default = ["rt", "embedded-hal-02"]
