@@ -1,74 +1,88 @@
 #![no_std]
 #![no_main]
 
-mod resources;
-use resources::{instance, parameter};
+use core::{
+    cell::{Cell, RefCell, UnsafeCell},
+    f32::consts::PI,
+    iter::once,
+    sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering},
+};
+use cortex_m::{
+    interrupt::{Mutex, free},
+    singleton,
+};
+use cortex_m_rt::entry;
+use embedded_hal::digital::{InputPin, OutputPin, StatefulOutputPin};
 
-use panic_rtt_target as _;
-use rtt_target::{rprintln, rtt_init_print};
+use nrf52840_hal as hal;
+use nrf52840_hal::gpio::Level;
+use panic_halt as _;
 
-use cortex_m::{asm, interrupt::free, interrupt::{Mutex}};
+use usbd_serial::SerialPort;
+use usbhid::num_enum::FromPrimitive;
+use usbhid::*;
+use usbhid::{
+    device::keyboard::NKROBootKeyboardReport,
+    usb_device::{class_prelude::*, prelude::*},
+};
+use usbhid::{device::mouse::WheelMouseReport, usb_class::UsbHidClassBuilder};
+use enum_map::{Enum, EnumMap};
+use itoa::Buffer;
+use libm::{cosf, hypotf, roundf, sinf};
+mod events;
 
-use h7lib::*;
-use periph::{pwr, rcc, gpio, adc, spi, timer, dma, ethernet};
-use plugin::{pwm, ethernet_phy};
 
+// ledはアクティブロー
+// LSM6DS3TR-Cが乗っているらしい
+#[entry]
 fn main() -> ! {
-    rtt_init_print!();
-    
-    let pwr_config = pwr::PwrConfig {
-        ..Default::default()
-    };
-    let pwr = pwr::Power::init(pwr_config);
-
-    let rcc_config = rcc::Config {
-        sys_ck: Some(200.MHz()),
-        rcc_hclk: Some(200.MHz()),
-        pll1: rcc::PllConfig {
-            q_ck: Some(100.MHz()),
-            ..Default::default()
-        },
-        pll2: rcc::PllConfig {
-            p_ck: Some(4.MHz()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let clock = rcc::Rcc::init(pwr, rcc_config);
-
-    let ins = instance::Instance::new(&clock);
-
+    let p = hal::pac::Peripherals::take().unwrap();
+    let port0 = hal::gpio::p0::Parts::new(p.P0);
+    let mut led = port0.p0_17.into_push_pull_output(Level::High);
     loop {
-        
+        led.set_low().unwrap();
+        // イベントがあるかチェック
+        // if events::has_pending_events() {
+        //     // 全てのイベントを処理
+        //     while let Some(event) = events::get_event() {
+        //         match event {
+        //             events::Event::LedUpdate => {
+                        
+        //             }
+        //             events::Event::CdcUpdate => {
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
 
+// // 24kHz
 // #[interrupt]
-// fn TIM1() {
-    //処理
-    //カルマンフィルタ計算
-    //PIDかSMCで計算
-    //PWM出力
-    //センサーデータ取得
-//     unsafe {
-//         spi2.transfer_dma(
-//             &SPI_WRITE_BUF,
-//             &mut SPI_READ_BUF,
-//             dma::DmaChannel::C1,
-//             dma::DmaChannel::C2,
-//             dma::ChannelCfg {
-//                 priority: dma::Priority::Medium,
-//                 circular: dma::Circular::Disabled,
-//                 periph_incr: dma::IncrMode::Disabled,
-//                 mem_incr: dma::IncrMode::Enabled,
-//             },
-//             dma::ChannelCfg {
-//                 priority: dma::Priority::Medium,
-//                 circular: dma::Circular::Disabled,
-//                 periph_incr: dma::IncrMode::Disabled,
-//                 mem_incr: dma::IncrMode::Enabled,
-//             },
-//             &mut dma,
-//         );
-//     }
+// fn TIMER_IRQ_0() {
+//     free(|cs| {
+//         let counter = TIMER_COUNTER.borrow(cs).get();
+//         let polling_rate = POLLINGRATE.borrow(cs).get();
+//         // まずOption::takeで中身を一時的に取り出す
+//         let mut opt = TIMERIRQ0_ITEMS.borrow(cs).borrow_mut().take();
+//         if let Some((mut alarm0)) = opt {
+//             alarm0.clear_interrupt();
+//             alarm0.schedule(PERIOD_US.micros()).unwrap();
+//             *TIMERIRQ0_ITEMS.borrow(cs).borrow_mut() = Some((alarm0));
+
+//             let div = FREQUENCY / polling_rate;
+//             if counter % div == 0 {
+//                 events::post_event(events::Event::UsbUpdate);
+//             }
+//             let div = div * 10;
+//             if counter % div == 0 {
+//                 events::post_event(events::Event::CdcUpdate);
+//             }
+//             let div = div * 10;
+//             if counter % div == 0 {
+//                 events::post_event(events::Event::LedUpdate);
+//             }
+//             TIMER_COUNTER.borrow(cs).set(counter + 1);
+//         }
+//     });
 // }

@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "embedded-hal",
+    "embedded-hal-async",
+    "embedded-hal-nb",
+    "embedded-hal-bus",
+    "embedded-can",
+    "embedded-io",
+    "embedded-io-async",
+    "embedded-io-adapters",
+]

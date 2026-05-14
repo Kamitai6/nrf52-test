@@ -1,0 +1,42 @@
+[config]
+skip_core_tasks = true
+
+[env]
+TARGET   = "thumbv7em-none-eabihf"
+PROFILE  = "release"
+BIN_PATH = "target/${TARGET}/${PROFILE}/${CARGO_MAKE_CRATE_NAME}.bin"
+UF2_PATH = "target/${TARGET}/${PROFILE}/${CARGO_MAKE_CRATE_NAME}.uf2"
+
+# ① ファームウェアのビルド
+[tasks.build-firmware]
+description = "nRF52840向けファームウェアをビルドします"
+command = "cargo"
+args = ["build", "--release"]
+
+# ② ELF → バイナリ変換
+[tasks.generate-bin]
+description = "ELFファイルからバイナリを生成します"
+dependencies = ["build-firmware"]
+command = "cargo"
+args = ["objcopy", "--release", "--", "-O", "binary", "${BIN_PATH}"]
+
+# ③ バイナリ → UF2変換
+[tasks.generate-uf2]
+description = "バイナリからUF2ファイルを生成します"
+dependencies = ["generate-bin"]
+command = "python"
+args = [
+    "uf2conv.py",
+    "${BIN_PATH}",
+    "-c",
+    "-b", "0x27000",
+    "-f", "0xADA52840",
+    "-o", "${UF2_PATH}"
+]
+
+# ④ XIAO-SENSEへの書き込み
+[tasks.flash]
+description = "XIAO-SENSEドライブを検出してUF2を書き込みます"
+dependencies = ["generate-uf2"]
+command = "powershell"
+args = ["-ExecutionPolicy", "Bypass", "-File", "flash.ps1", "${UF2_PATH}"]
