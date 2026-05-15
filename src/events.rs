@@ -18,6 +18,7 @@ pub enum Event {
     LedUpdate,
     CdcUpdate,
     UsbUpdate,
+    ReadSensor,
 }
 
 // イベントを発行（割り込みから呼び出し）

@@ -18,10 +18,11 @@ embedded_hal_0_2 = {version = "0.2.5", features = ["unproven"], package = "embed
 nrf52840-hal = { version = "0.20.0", path = "./modules/nrf-hal/nrf52840-hal" }
 usbhid = {version = "0.5.1", path = "./modules/usbhid"}
 usbd-serial = {version = "0.2.2", path = "./modules/usbd-serial"}
-itoa = { version = "1.0", default-features = false }
 heapless = { version = "0.9", default-features = false }
 enum-map = "2.7"
 libm = { version = "0.2.15" }
+max3010x = { version = "0.2.0" }
+nb = { version = "1.1" }
 
 [patch.crates-io]
 usb-device = { path = "./modules/usb-device" }
